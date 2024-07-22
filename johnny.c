@@ -36,23 +36,35 @@ char* get_file_name_from_request(char *request) {
     return request + 5;
 }
 
-void url_encode(const char* s, char** buf_ptr) {
+char* url_encode(const char* originalText)
+{
     // allocate memory for the worst possible case (all characters need to be encoded)
-    char html5[256] = {0};
-    for (int i = 0; i < 256; i++)
-        html5[i] = isalnum(i) || i == '*' || i == '-' || i == '.' || i == '_' ? i : (i == ' ' ? '+' : 0);
+    char *encodedText = (char *)malloc(sizeof(char)*strlen(originalText)*3+1);
 
-    char* buf = *buf_ptr;
-    for (; *s; s++) {
-        if (html5[*s])
-            *buf = html5[*s];
-        else
-            sprintf( buf, "%%%02X", *s);
-        while (*++buf);
+    const char *hex = "0123456789abcdef";
+
+    int pos = 0;
+    for (int i = 0; i < strlen(originalText); i++) {
+        if (('a' <= originalText[i] && originalText[i] <= 'z')
+            || ('A' <= originalText[i] && originalText[i] <= 'Z')
+            || ('0' <= originalText[i] && originalText[i] <= '9')
+            || (originalText[i] == '-')
+            || (originalText[i] == '_')
+            || (originalText[i] == '~')
+            || (originalText[i] == '.')) {
+            encodedText[pos++] = originalText[i];
+            } else {
+                encodedText[pos++] = '%';
+                encodedText[pos++] = hex[originalText[i] >> 4];
+                encodedText[pos++] = hex[originalText[i] & 15];
+            }
     }
+    encodedText[pos] = '\0';
+    return encodedText;
 }
 
 unsigned int count_files(char* dir_name) {
+    printf("counting files\n");
     unsigned int file_count = 0;
     DIR* d;
     struct dirent* dir;
@@ -99,6 +111,7 @@ void johnny_handles_request(int* client_fd) {
 }
 
 struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_name) {
+    printf("starting reading %s\n", file_name);
     const char* file_ext = get_file_extension(file_name);
     const char* mime_type = get_mime_type(file_ext);
     const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n\r\n";
@@ -108,16 +121,20 @@ struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_nam
     strcat(file_path, "/");
     strcat(file_path, file_name);
     unsigned char* buf;
+    printf("slurping %s\n", file_name);
     size_t file_size = slurp(file_path, &buf);
+    printf("slurped %s\n", file_name);
 
     size_t response_length = strlen(header_format) + strlen(mime_type) - 2 + file_size;
     char* response = malloc(response_length);
     sprintf(response, header_format, mime_type);
     memcpy(response + response_length - file_size, buf, file_size);
     free(buf);
+    response_length += file_size;
 
-    char* encoded_file_name_buf = malloc(strlen(file_name) * 3 + 1);
-    url_encode(file_name, &encoded_file_name_buf);
+    printf("url encoding %s\n", file_name);
+    char* encoded_file_name_buf = url_encode(file_name);
+    printf("url encoded %s\n", encoded_file_name_buf);
 
     struct johnny_file file = { .response_length = response_length, .response = response, .url_encoded_file_name = encoded_file_name_buf };
     return file;
@@ -125,6 +142,8 @@ struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_nam
 
 unsigned int johnny_slurps_files(char* dir_name, struct johnny_file** johnny_files) {
     unsigned int file_count = count_files(dir_name);
+    printf("file count: %d\n", file_count);
+    printf("size of johnny_file struct: %lu\n", sizeof(struct johnny_file));
     *johnny_files = malloc(file_count * sizeof(struct johnny_file));
     DIR *d;
     struct dirent* dir;
@@ -165,8 +184,9 @@ int main(int argc, char* argv[]) {
     for (int file_counter = 0; file_counter < johnny_file_count; file_counter++) {
         total_strings_length += strlen(johnny_files[file_counter].url_encoded_file_name) + 1;
     }
+    printf("total file names length: %d\n", total_strings_length);
     char* contiguous_block_of_url_encoded_file_names = malloc(total_strings_length);
-    int string_offset = 0;
+    unsigned int string_offset = 0;
     for (int file_counter = 0; file_counter < johnny_file_count; file_counter++) {
         unsigned int inclusive_string_length = strlen(johnny_files[file_counter].url_encoded_file_name) + 1;
         memcpy(contiguous_block_of_url_encoded_file_names + string_offset, johnny_files[file_counter].url_encoded_file_name, inclusive_string_length);
@@ -175,16 +195,23 @@ int main(int argc, char* argv[]) {
         vector[file_counter] = contiguous_block_of_url_encoded_file_names + string_offset;
         string_offset += inclusive_string_length;
     }
-    cmph_io_adapter_t* source = cmph_io_vector_adapter(vector, johnny_file_count);
+    printf("string offset after writing to memory: %d\n", string_offset);
 
-    //Create minimal perfect hash function using the chd algorithm.
+    printf("creating minimal perfect hash function using the chd algorithm\n");
+    cmph_io_adapter_t* source = cmph_io_vector_adapter(vector, johnny_file_count);
+    printf("configuring cmph\n");
     cmph_config_t *config = cmph_config_new(source);
+    printf("setting chd as algo to use\n");
     cmph_config_set_algo(config, CMPH_CHD);
+    printf("creating hash function\n");
     johnny_hash = cmph_new(config);
+    printf("destroying config\n");
     cmph_config_destroy(config);
 
     //Find key
+    printf("reordering files\n");
     reorder_johnny_files(johnny_file_count);
+    printf("finding keys\n");
     unsigned int i = 0;
     while (i < johnny_file_count) {
         const char *key = vector[i];
