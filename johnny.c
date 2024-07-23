@@ -51,7 +51,8 @@ char* url_encode(const char* originalText)
             || (originalText[i] == '-')
             || (originalText[i] == '_')
             || (originalText[i] == '~')
-            || (originalText[i] == '.')) {
+            || (originalText[i] == '.')
+            || (originalText[i] == '/')) {
             encodedText[pos++] = originalText[i];
             } else {
                 encodedText[pos++] = '%';
@@ -67,12 +68,21 @@ unsigned int count_files(char* dir_name) {
     printf("counting files\n");
     unsigned int file_count = 0;
     DIR* d;
-    struct dirent* dir;
+    struct dirent* dir_ent;
     d = opendir(dir_name);
     if (d) {
-        while ((dir = readdir(d)) != NULL)
-            if (dir->d_type == DT_REG)
+        while ((dir_ent = readdir(d)) != NULL) {
+            char path[strlen(dir_name) + strlen(dir_ent->d_name) + 2];
+            strcpy(path, dir_name);
+            strcat(path, "/");
+            strcat(path, dir_ent->d_name);
+            struct stat sb;
+            lstat(path, &sb);
+            if (sb.st_mode & S_IFMT == S_IFREG)
                 file_count++;
+            else if (sb.st_mode & S_IFMT == S_IFDIR)
+                file_count += count_files(path);
+        }
         closedir(d);
     }
     return file_count;
