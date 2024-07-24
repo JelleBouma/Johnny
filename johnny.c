@@ -10,6 +10,7 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include "file_io.h"
 #include "cmph/src/cmph.h"
@@ -65,24 +66,26 @@ char* url_encode(const char* originalText)
 }
 
 unsigned int count_files(char* dir_name) {
-    printf("counting files\n");
+    printf("counting files in directory %s\n", dir_name);
     unsigned int file_count = 0;
     DIR* d;
     struct dirent* dir_ent;
     d = opendir(dir_name);
     if (d) {
-        while ((dir_ent = readdir(d)) != NULL) {
-            char path[strlen(dir_name) + strlen(dir_ent->d_name) + 2];
-            strcpy(path, dir_name);
-            strcat(path, "/");
-            strcat(path, dir_ent->d_name);
-            struct stat sb;
-            lstat(path, &sb);
-            if (sb.st_mode & S_IFMT == S_IFREG)
-                file_count++;
-            else if (sb.st_mode & S_IFMT == S_IFDIR)
-                file_count += count_files(path);
-        }
+        while ((dir_ent = readdir(d)) != NULL)
+            if (strcmp(dir_ent->d_name, ".") && strcmp(dir_ent->d_name, "..")) {
+                char path[strlen(dir_name) + strlen(dir_ent->d_name) + 2];
+                strcpy(path, dir_name);
+                strcat(path, dir_ent->d_name);
+                struct stat sb;
+                lstat(path, &sb);
+                if ((sb.st_mode & S_IFMT) == S_IFREG)
+                    file_count++;
+                else if ((sb.st_mode & S_IFMT) == S_IFDIR) {
+                    strcat(path, "/");
+                    file_count += count_files(path);
+                }
+            }
         closedir(d);
     }
     return file_count;
@@ -132,20 +135,16 @@ void johnny_handles_request(int* client_fd) {
     free(client_fd);
 }
 
-struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_name) {
-    printf("starting reading %s\n", file_name);
+struct johnny_file johnny_slurps_file(const char* file_path, const char* file_name) {
+    printf("reading %s, ", file_name);
     const char* file_ext = get_file_extension(file_name);
     const char* mime_type = get_mime_type(file_ext);
     const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n\r\n";
 
-    char file_path[strlen(dir_name) + strlen(file_name) + 2];
-    strcpy(file_path, dir_name);
-    strcat(file_path, "/");
-    strcat(file_path, file_name);
     unsigned char* buf;
-    printf("slurping %s\n", file_name);
+    printf("slurping, ");
     size_t file_size = slurp(file_path, &buf);
-    printf("slurped %s\n", file_name);
+    printf("slurped, ");
 
     size_t response_length = strlen(header_format) + strlen(mime_type) - 2 + file_size;
     char* response = malloc(response_length);
@@ -154,7 +153,7 @@ struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_nam
     free(buf);
     response_length += file_size;
 
-    printf("url encoding %s\n", file_name);
+    printf("url encoding, ");
     char* encoded_file_name_buf = url_encode(file_name);
     printf("url encoded %s\n", encoded_file_name_buf);
 
@@ -162,24 +161,38 @@ struct johnny_file johnny_slurps_file(const char* dir_name, const char* file_nam
     return file;
 }
 
-unsigned int johnny_slurps_files(char* dir_name, struct johnny_file** johnny_files) {
-    unsigned int file_count = count_files(dir_name);
-    printf("file count: %d\n", file_count);
-    printf("size of johnny_file struct: %lu\n", sizeof(struct johnny_file));
-    *johnny_files = malloc(file_count * sizeof(struct johnny_file));
+unsigned int johnny_slurps_files(char* base_dir, char* rel_dir, unsigned int file_counter) {
     DIR *d;
-    struct dirent* dir;
-    d = opendir(dir_name);
-    unsigned int file_counter = 0;
+    struct dirent* dir_ent;
+    char dir_path[strlen(base_dir) + strlen(rel_dir) + 1];
+    strcpy(dir_path, base_dir);
+    strcat(dir_path, rel_dir);
+    d = opendir(dir_path);
     if (d) {
-        while ((dir = readdir(d)) != NULL)
-            if (dir->d_type == DT_REG) {
-                (*johnny_files)[file_counter] = johnny_slurps_file(dir_name, dir->d_name);
-                file_counter++;
+        while ((dir_ent = readdir(d)) != NULL)
+            if (strcmp(dir_ent->d_name, ".") && strcmp(dir_ent->d_name, "..")) {
+                struct stat sb;
+                char full_path[strlen(dir_path) + strlen(dir_ent->d_name) + 2];
+                strcpy(full_path, dir_path);
+                strcat(full_path, "/");
+                strcat(full_path, dir_ent->d_name);
+                lstat(full_path, &sb);
+                char rel_path[strlen(rel_dir) + strlen(dir_ent->d_name) + 2];
+                strcpy(rel_path, rel_dir);
+                if ((sb.st_mode & S_IFMT) == S_IFREG) {
+                    strcat(rel_path, dir_ent->d_name);
+                    johnny_files[file_counter] = johnny_slurps_file(full_path, rel_path);
+                    file_counter++;
+                }
+                else if ((sb.st_mode & S_IFMT) == S_IFDIR) {
+                    strcat(rel_path, dir_ent->d_name);
+                    strcat(rel_path, "/");
+                    file_counter = johnny_slurps_files(base_dir, rel_path, file_counter);
+                }
             }
         closedir(d);
     }
-    return file_count;
+    return file_counter;
 }
 
 void reorder_johnny_files(unsigned int johnny_file_count) {
@@ -193,12 +206,16 @@ void reorder_johnny_files(unsigned int johnny_file_count) {
 }
 
 int main(int argc, char* argv[]) {
+    setvbuf(stdout, NULL, _IONBF, 0);
     int port = atoi(argv[1]);
     char* dir_name = argv[2];
     int server_fd;
     struct sockaddr_in server_addr;
-    unsigned int johnny_file_count = johnny_slurps_files(dir_name, &johnny_files);
+
+    unsigned int johnny_file_count = count_files(dir_name);
     printf("johnny files: %d\n", johnny_file_count);
+    johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
+    johnny_slurps_files(dir_name, "", 0);
 
     // Creating a filled vector
     char* vector[johnny_file_count];
