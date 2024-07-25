@@ -151,7 +151,6 @@ struct johnny_file johnny_slurps_file(const char* file_path, const char* file_na
     sprintf(response, header_format, mime_type);
     memcpy(response + response_length - file_size, buf, file_size);
     free(buf);
-    response_length += file_size;
 
     printf("url encoding, ");
     char* encoded_file_name_buf = url_encode(file_name);
