@@ -139,7 +139,7 @@ struct johnny_file johnny_slurps_file(const char* file_path, const char* file_na
     printf("reading %s, ", file_name);
     const char* file_ext = get_file_extension(file_name);
     const char* mime_type = get_mime_type(file_ext);
-    const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n\r\n";
+    const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-length: %lu\r\n\r\n";
 
     unsigned char* buf;
     printf("slurping, ");
@@ -148,7 +148,7 @@ struct johnny_file johnny_slurps_file(const char* file_path, const char* file_na
 
     size_t response_length = strlen(header_format) + strlen(mime_type) - 2 + file_size;
     char* response = malloc(response_length);
-    sprintf(response, header_format, mime_type);
+    sprintf(response, header_format, mime_type, file_size);
     memcpy(response + response_length - file_size, buf, file_size);
     free(buf);
 
