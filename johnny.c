@@ -95,16 +95,31 @@ const char* get_mime_type(const char *file_ext) {
         return "image/jpeg";
     if (!strcasecmp(file_ext, "png"))
         return "image/png";
+    if (!strcasecmp(file_ext, "apng"))
+        return "image/apng";
     if (!strcasecmp(file_ext, "avif"))
         return "image/avif";
     if (!strcasecmp(file_ext, "gif"))
         return "image/gif";
+
+    if (!strcasecmp(file_ext, "html"))
+        return "text/html";
     if (!strcasecmp(file_ext, "js"))
         return "text/javascript";
     if (!strcasecmp(file_ext, "css"))
         return "text/css";
+
+    if (!strcasecmp(file_ext, "otf"))
+        return "font/otf";
+    if (!strcasecmp(file_ext, "ttf"))
+        return "font/ttf";
+    if (!strcasecmp(file_ext, "woff"))
+        return "font/woff";
     if (!strcasecmp(file_ext, "woff2"))
         return "font/woff2";
+
+    if (!strcasecmp(file_ext, "json"))
+        return "application/json";
     if (!strcasecmp(file_ext, "wasm"))
         return "application/wasm";
     return "application/octet-stream";
