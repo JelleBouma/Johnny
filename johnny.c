@@ -1,5 +1,4 @@
 #include <arpa/inet.h>
-#include <ctype.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <netinet/in.h>
@@ -116,22 +115,25 @@ void johnny_handles_request(int* client_fd) {
     char buffer[262];
 
     // receive request data from client and store into buffer
-    ssize_t bytes_received = recv(*client_fd, buffer, buffer_size, 0);
-    if (bytes_received > 0) {
-        // find file
-        char* file_name = get_file_name_from_request(buffer);
-        unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
-        struct johnny_file johnny_file = johnny_files[index];
+    ssize_t bytes_received = 1;
+    while (bytes_received > 0) {
+        bytes_received = recv(*client_fd, buffer, buffer_size, 0);
+        if (bytes_received > 0) {
+            // find file
+            char* file_name = get_file_name_from_request(buffer);
+            unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
+            struct johnny_file johnny_file = johnny_files[index];
 
-        // build response
-        const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
-        const char* response = found ? johnny_file.response : "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\n404 Not Found";
-        const size_t response_length = found ? johnny_file.response_length : strlen(response);
+            // build response
+            const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
+            const char* response = found ? johnny_file.response : "HTTP/1.1 404 Not Found\r\n\r\n";
+            const size_t response_length = found ? johnny_file.response_length : strlen(response);
 
-        // send HTTP response to client
-        size_t sentBytes = 0;
-        while (sentBytes < response_length)
-            sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
+            // send HTTP response to client
+            size_t sentBytes = 0;
+            while (sentBytes < response_length)
+                sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
+        }
     }
     free(client_fd);
 }
