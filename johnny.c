@@ -129,9 +129,10 @@ void johnny_handles_request(int* client_fd) {
         const size_t response_length = found ? johnny_file.response_length : strlen(response);
 
         // send HTTP response to client
-        send(*client_fd, response, response_length, 0);
+        size_t sentBytes = 0;
+        while (sentBytes < response_length)
+            sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
     }
-    close(*client_fd);
     free(client_fd);
 }
 
@@ -146,9 +147,11 @@ struct johnny_file johnny_slurps_file(const char* file_path, const char* file_na
     size_t file_size = slurp(file_path, &buf);
     printf("slurped, ");
 
-    size_t response_length = strlen(header_format) + strlen(mime_type) - 2 + file_size;
+    char tempHeaderBuffer[1024];
+    sprintf(tempHeaderBuffer, header_format, mime_type, file_size);
+    const size_t response_length = strlen(tempHeaderBuffer) + file_size;
     char* response = malloc(response_length);
-    sprintf(response, header_format, mime_type, file_size);
+    memcpy(response, tempHeaderBuffer, response_length - file_size);
     memcpy(response + response_length - file_size, buf, file_size);
     free(buf);
 
@@ -213,6 +216,8 @@ int main(int argc, char* argv[]) {
 
     unsigned int johnny_file_count = count_files(dir_name);
     printf("johnny files: %d\n", johnny_file_count);
+    if (johnny_file_count == 0)
+        return EXIT_FAILURE;
     johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
     johnny_slurps_files(dir_name, "", 0);
 
@@ -269,6 +274,7 @@ int main(int argc, char* argv[]) {
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(port);
+    memset(server_addr.sin_zero, 0, 8);
 
     // bind socket to port
     if (bind(server_fd,
