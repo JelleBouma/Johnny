@@ -31,11 +31,6 @@ const char* get_file_extension(const char *file_name) {
     return dot + 1;
 }
 
-char* get_file_name_from_request(char *request) {
-    strtok(request + 5, " ");
-    return request + 5;
-}
-
 char* url_encode(const char* originalText)
 {
     // allocate memory for the worst possible case (all characters need to be encoded)
@@ -125,29 +120,54 @@ const char* get_mime_type(const char *file_ext) {
     return "application/octet-stream";
 }
 
-void johnny_handles_request(int* client_fd) {
-    size_t buffer_size = 262;
-    char buffer[262];
+void johnny_sends_response(int* client_fd, char* file_name) {
+    unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
+    struct johnny_file johnny_file = johnny_files[index];
 
-    // receive request data from client and store into buffer
+    // build response
+    const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
+    const char* response = found ? johnny_file.response : "HTTP/1.1 404 Not Found\r\nContent-length: 0\r\n\r\n";
+    const size_t response_length = found ? johnny_file.response_length : strlen(response);
+
+    // send HTTP response to client
+    size_t sentBytes = 0;
+    while (sentBytes < response_length)
+        sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
+}
+
+void johnny_handles_requests(int* client_fd) {
+    const size_t buffer_size = 1024;
+    char buffer[buffer_size];
+
+    char* rnrnget_slash = "\r\n\r\nGET /";
+    unsigned int rnrnget_slash_counter = 4;
     ssize_t bytes_received = 1;
+    unsigned int bytes_parsed = 1;
     while (bytes_received > 0) {
-        bytes_received = recv(*client_fd, buffer, buffer_size, 0);
-        if (bytes_received > 0) {
-            // find file
-            char* file_name = get_file_name_from_request(buffer);
-            unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
-            struct johnny_file johnny_file = johnny_files[index];
-
-            // build response
-            const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
-            const char* response = found ? johnny_file.response : "HTTP/1.1 404 Not Found\r\n\r\n";
-            const size_t response_length = found ? johnny_file.response_length : strlen(response);
-
-            // send HTTP response to client
-            size_t sentBytes = 0;
-            while (sentBytes < response_length)
-                sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
+        if (bytes_parsed >= bytes_received) {
+            bytes_received = recv(*client_fd, buffer + rnrnget_slash_counter, buffer_size - rnrnget_slash_counter, 0);
+            bytes_received += rnrnget_slash_counter;
+            bytes_parsed = rnrnget_slash_counter;
+        }
+        for (; bytes_parsed < bytes_received; bytes_parsed++) {
+            if (rnrnget_slash_counter == 9) { // start of file name
+                for (; bytes_parsed < bytes_received; bytes_parsed++) {
+                    if (buffer[bytes_parsed] == ' ') { // end of file name
+                        buffer[bytes_parsed] = '\0';
+                        johnny_sends_response(client_fd, buffer + bytes_parsed - rnrnget_slash_counter + 9);
+                        rnrnget_slash_counter = 0;
+                        break;
+                    }
+                    rnrnget_slash_counter++;
+                }
+                if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) // found only partial file name
+                    memcpy(buffer, buffer + bytes_parsed - rnrnget_slash_counter, rnrnget_slash_counter);
+                rnrnget_slash_counter = 0;
+            }
+            else if (buffer[bytes_parsed] == rnrnget_slash[rnrnget_slash_counter])
+                rnrnget_slash_counter++;
+            else
+                rnrnget_slash_counter = 0;
         }
     }
     free(client_fd);
@@ -293,6 +313,13 @@ int main(int argc, char* argv[]) {
     server_addr.sin_port = htons(port);
     memset(server_addr.sin_zero, 0, 8);
 
+    // lose the pesky "Address already in use" error message
+    int yes=1;
+    if (setsockopt(server_fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes) == -1) {
+        perror("setsockopt");
+        exit(1);
+    }
+
     // bind socket to port
     if (bind(server_fd,
             (struct sockaddr *)&server_addr,
@@ -324,7 +351,7 @@ int main(int argc, char* argv[]) {
 
         // create a new thread to handle client request
         pthread_t thread_id;
-        pthread_create(&thread_id, NULL, johnny_handles_request, client_fd);
+        pthread_create(&thread_id, NULL, johnny_handles_requests, client_fd);
         pthread_detach(thread_id);
     }
 }
