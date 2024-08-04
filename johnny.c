@@ -11,6 +11,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/epoll.h>
 #include "file_io.h"
 #include "cmph/src/cmph.h"
 
@@ -18,6 +19,13 @@ struct johnny_file {
     char* url_encoded_file_name;
     char* response;
     size_t response_length;
+};
+
+struct socket_context {
+    char buffer[1024];
+    int fd;
+    unsigned int rnrnget_slash_counter;
+    void (*handler)(struct socket_context*, int);
 };
 
 struct johnny_file* johnny_files;
@@ -120,7 +128,7 @@ const char* get_mime_type(const char *file_ext) {
     return "application/octet-stream";
 }
 
-void johnny_sends_response(int* client_fd, char* file_name) {
+void johnny_sends_response(int client_fd, char* file_name) {
     unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
     struct johnny_file johnny_file = johnny_files[index];
 
@@ -132,49 +140,73 @@ void johnny_sends_response(int* client_fd, char* file_name) {
     // send HTTP response to client
     size_t sentBytes = 0;
     while (sentBytes < response_length)
-        sentBytes += write(*client_fd, response + sentBytes, response_length - sentBytes);
+        sentBytes += write(client_fd, response + sentBytes, response_length - sentBytes);
 }
 
-void johnny_handles_requests(int* client_fd) {
-    const size_t buffer_size = 1024;
-    char buffer[buffer_size];
-
-    char* rnrnget_slash = "\r\n\r\nGET /";
-    unsigned int rnrnget_slash_counter = 4;
+void johnny_handles_requests(struct socket_context* ctx, int epfd) {
     ssize_t bytes_received = 1;
     unsigned int bytes_parsed = 1;
     while (bytes_received > 0) {
         if (bytes_parsed >= bytes_received) {
-            bytes_received = recv(*client_fd, buffer + rnrnget_slash_counter, buffer_size - rnrnget_slash_counter, 0);
-            bytes_received += rnrnget_slash_counter;
-            bytes_parsed = rnrnget_slash_counter;
+            unsigned int buffer_offset = ctx->rnrnget_slash_counter > 9 ? ctx->rnrnget_slash_counter - 9 : 0;
+            bytes_received = recv(ctx->fd, ctx->buffer + buffer_offset, 1024 - buffer_offset, MSG_DONTWAIT);
+            bytes_parsed = 0;
         }
         for (; bytes_parsed < bytes_received; bytes_parsed++) {
-            if (rnrnget_slash_counter == 9) { // start of file name
+            if (ctx->rnrnget_slash_counter >= 9) { // start of file name
                 for (; bytes_parsed < bytes_received; bytes_parsed++) {
-                    if (buffer[bytes_parsed] == ' ') { // end of file name
-                        buffer[bytes_parsed] = '\0';
-                        johnny_sends_response(client_fd, buffer + bytes_parsed - rnrnget_slash_counter + 9);
-                        rnrnget_slash_counter = 0;
+                    if (ctx->buffer[bytes_parsed] == ' ') { // end of file name
+                        ctx->buffer[bytes_parsed] = '\0';
+                        johnny_sends_response(ctx->fd, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9);
+                        ctx->rnrnget_slash_counter = 0;
                         break;
                     }
-                    rnrnget_slash_counter++;
+                    ctx->rnrnget_slash_counter++;
                 }
-                if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) { // found only partial file name
-                    if (bytes_parsed != rnrnget_slash_counter + 9)
-                        memcpy(buffer, buffer + bytes_parsed - rnrnget_slash_counter + 9, rnrnget_slash_counter - 9);
-                    rnrnget_slash_counter = 9;
+                if (ctx->rnrnget_slash_counter != 0 && ctx->rnrnget_slash_counter < 266) { // found only partial file name
+                    if (bytes_parsed != ctx->rnrnget_slash_counter + 9)
+                        memcpy(ctx->buffer, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9, ctx->rnrnget_slash_counter - 9);
                 }
                 else
-                    rnrnget_slash_counter = 0;
+                    ctx->rnrnget_slash_counter = 0;
             }
-            else if (buffer[bytes_parsed] == rnrnget_slash[rnrnget_slash_counter])
-                rnrnget_slash_counter++;
+            else if (ctx->buffer[bytes_parsed] == "\r\n\r\nGET /"[ctx->rnrnget_slash_counter])
+                ctx->rnrnget_slash_counter++;
             else
-                rnrnget_slash_counter = 0;
+                ctx->rnrnget_slash_counter = 0;
         }
     }
-    free(client_fd);
+}
+
+void johnny_handles_listening(struct socket_context* ctx, int epfd) {
+    struct socket_context* con_ctx = malloc(sizeof(struct socket_context));
+    con_ctx->fd = accept(ctx->fd, NULL, NULL);
+    con_ctx->handler = johnny_handles_requests;
+    con_ctx->rnrnget_slash_counter = 4;
+    if (fcntl(con_ctx->fd, F_SETFL, O_NONBLOCK)){
+        perror("calling fcntl");
+    }
+    struct epoll_event* ev = malloc(sizeof(struct epoll_event));
+    ev->data.ptr = con_ctx;
+    ev->events = EPOLLIN | EPOLLET;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx->fd, ev);
+}
+
+void johnny_worker(int* server_fd) {
+    struct epoll_event ev, evs[1024];
+    struct socket_context listen_ctx = { .fd = *server_fd, .handler = johnny_handles_listening };
+    int epfd = epoll_create1(0);
+    ev.data.ptr = &listen_ctx;
+    ev.events = EPOLLIN | EPOLLET;
+    epoll_ctl(epfd, EPOLL_CTL_ADD, *server_fd, &ev);
+    while(true) {
+        unsigned int nfds = epoll_wait(epfd, evs, 1024, -1);
+
+        for (unsigned int i = 0; i < nfds; i++) {
+            struct socket_context* ctx = evs[i].data.ptr;
+            ctx->handler(evs[i].data.ptr, epfd);
+        }
+    }
 }
 
 struct johnny_file johnny_slurps_file(const char* file_path, const char* file_name) {
@@ -250,8 +282,10 @@ void reorder_johnny_files(unsigned int johnny_file_count) {
 
 int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    int port = atoi(argv[1]);
-    char* dir_name = argv[2];
+    unsigned int port = atoi(argv[1]);
+    unsigned int thread_cnt = atoi(argv[2]);
+
+    char* dir_name = argv[3];
     int server_fd;
     struct sockaddr_in server_addr;
 
@@ -306,7 +340,7 @@ int main(int argc, char* argv[]) {
 
 
     // create server socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+    if ((server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
@@ -339,23 +373,11 @@ int main(int argc, char* argv[]) {
     }
 
     printf("Johnny listening on port %d\n", port);
-    while (true) {
-        // client info
-        struct sockaddr_in client_addr;
-        socklen_t client_addr_len = sizeof(client_addr);
-        int* client_fd = malloc(sizeof(int));
-
-        // accept client connection
-        if ((*client_fd = accept(server_fd,
-                                (struct sockaddr *)&client_addr,
-                                &client_addr_len)) < 0) {
-            perror("accept failed");
-            continue;
-        }
-
+    for (int thread_ctr = 0; thread_ctr < thread_cnt - 1; thread_ctr++) {
         // create a new thread to handle client request
         pthread_t thread_id;
-        pthread_create(&thread_id, NULL, johnny_handles_requests, client_fd);
+        pthread_create(&thread_id, NULL, johnny_worker, &server_fd);
         pthread_detach(thread_id);
     }
+    johnny_worker(&server_fd);
 }
