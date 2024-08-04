@@ -160,9 +160,13 @@ void johnny_handles_requests(int* client_fd) {
                     }
                     rnrnget_slash_counter++;
                 }
-                if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) // found only partial file name
-                    memcpy(buffer, buffer + bytes_parsed - rnrnget_slash_counter, rnrnget_slash_counter);
-                rnrnget_slash_counter = 0;
+                if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) { // found only partial file name
+                    if (bytes_parsed != rnrnget_slash_counter + 9)
+                        memcpy(buffer, buffer + bytes_parsed - rnrnget_slash_counter + 9, rnrnget_slash_counter - 9);
+                    rnrnget_slash_counter = 9;
+                }
+                else
+                    rnrnget_slash_counter = 0;
             }
             else if (buffer[bytes_parsed] == rnrnget_slash[rnrnget_slash_counter])
                 rnrnget_slash_counter++;
