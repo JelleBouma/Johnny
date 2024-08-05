@@ -210,27 +210,22 @@ void johnny_worker(int* server_fd) {
 }
 
 struct johnny_file johnny_slurps_file(const char* file_path, const char* file_name) {
-    printf("reading %s, ", file_name);
     const char* file_ext = get_file_extension(file_name);
     const char* mime_type = get_mime_type(file_ext);
     const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-length: %lu\r\n\r\n";
 
     unsigned char* buf;
-    printf("slurping, ");
     size_t file_size = slurp(file_path, &buf);
-    printf("slurped, ");
 
-    char tempHeaderBuffer[1024];
-    sprintf(tempHeaderBuffer, header_format, mime_type, file_size);
-    const size_t response_length = strlen(tempHeaderBuffer) + file_size;
+    char temp_header_buffer[1024];
+    sprintf(temp_header_buffer, header_format, mime_type, file_size);
+    const size_t response_length = strlen(temp_header_buffer) + file_size;
     char* response = malloc(response_length);
-    memcpy(response, tempHeaderBuffer, response_length - file_size);
+    memcpy(response, temp_header_buffer, response_length - file_size);
     memcpy(response + response_length - file_size, buf, file_size);
     free(buf);
 
-    printf("url encoding, ");
     char* encoded_file_name_buf = url_encode(file_name);
-    printf("url encoded %s\n", encoded_file_name_buf);
 
     struct johnny_file file = { .response_length = response_length, .response = response, .url_encoded_file_name = encoded_file_name_buf };
     return file;
@@ -325,19 +320,8 @@ int main(int argc, char* argv[]) {
     johnny_hash = cmph_new(config);
     printf("destroying config\n");
     cmph_config_destroy(config);
-
-    //Find key
     printf("reordering files\n");
     reorder_johnny_files(johnny_file_count);
-    printf("finding keys\n");
-    unsigned int i = 0;
-    while (i < johnny_file_count) {
-        const char *key = vector[i];
-        unsigned int id = cmph_search(johnny_hash, key, strlen(key));
-        printf("key:%s -- hash:%u\n", key, id);
-        i++;
-    }
-
 
     // create server socket
     if ((*server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0) {
