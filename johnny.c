@@ -286,7 +286,7 @@ int main(int argc, char* argv[]) {
     unsigned int thread_cnt = atoi(argv[2]);
 
     char* dir_name = argv[3];
-    int server_fd;
+    int* server_fd = malloc(sizeof(int));
     struct sockaddr_in server_addr;
 
     unsigned int johnny_file_count = count_files(dir_name);
@@ -340,7 +340,7 @@ int main(int argc, char* argv[]) {
 
 
     // create server socket
-    if ((server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0) {
+    if ((*server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0) {
         perror("socket failed");
         exit(EXIT_FAILURE);
     }
@@ -353,13 +353,13 @@ int main(int argc, char* argv[]) {
 
     // lose the pesky "Address already in use" error message
     int yes=1;
-    if (setsockopt(server_fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes) == -1) {
+    if (setsockopt(*server_fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes) == -1) {
         perror("setsockopt");
         exit(1);
     }
 
     // bind socket to port
-    if (bind(server_fd,
+    if (bind(*server_fd,
             (struct sockaddr *)&server_addr,
             sizeof(server_addr)) < 0) {
         perror("bind failed");
@@ -367,7 +367,7 @@ int main(int argc, char* argv[]) {
     }
 
     // listen for connections
-    if (listen(server_fd, 256) < 0) {
+    if (listen(*server_fd, 256) < 0) {
         perror("listen failed");
         exit(EXIT_FAILURE);
     }
@@ -376,8 +376,8 @@ int main(int argc, char* argv[]) {
     for (int thread_ctr = 0; thread_ctr < thread_cnt - 1; thread_ctr++) {
         // create a new thread to handle client request
         pthread_t thread_id;
-        pthread_create(&thread_id, NULL, johnny_worker, &server_fd);
+        pthread_create(&thread_id, NULL, johnny_worker, server_fd);
         pthread_detach(thread_id);
     }
-    johnny_worker(&server_fd);
+    johnny_worker(server_fd);
 }
