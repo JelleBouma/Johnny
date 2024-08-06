@@ -181,15 +181,19 @@ void johnny_handles_requests(struct socket_context* ctx, int epfd) {
 void johnny_handles_listening(struct socket_context* ctx, int epfd) {
     struct socket_context* con_ctx = malloc(sizeof(struct socket_context));
     con_ctx->fd = accept(ctx->fd, NULL, NULL);
-    con_ctx->handler = johnny_handles_requests;
-    con_ctx->rnrnget_slash_counter = 4;
-    if (fcntl(con_ctx->fd, F_SETFL, O_NONBLOCK)){
-        perror("calling fcntl");
+    if (con_ctx->fd == -1) // EAGAIN
+        free(con_ctx);
+    else { // connection made
+        con_ctx->handler = johnny_handles_requests;
+        con_ctx->rnrnget_slash_counter = 4;
+        if (fcntl(con_ctx->fd, F_SETFL, O_NONBLOCK)){
+            perror("calling fcntl");
+        }
+        struct epoll_event* ev = malloc(sizeof(struct epoll_event));
+        ev->data.ptr = con_ctx;
+        ev->events = EPOLLIN | EPOLLET;
+        epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx->fd, ev);
     }
-    struct epoll_event* ev = malloc(sizeof(struct epoll_event));
-    ev->data.ptr = con_ctx;
-    ev->events = EPOLLIN | EPOLLET;
-    epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx->fd, ev);
 }
 
 void johnny_worker(int* server_fd) {
