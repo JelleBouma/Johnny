@@ -139,8 +139,13 @@ void johnny_sends_response(int client_fd, char* file_name) {
 
     // send HTTP response to client
     size_t sentBytes = 0;
-    while (sentBytes < response_length)
-        sentBytes += write(client_fd, response + sentBytes, response_length - sentBytes);
+    while (sentBytes < response_length) {
+        int writeRes = write(client_fd, response + sentBytes, response_length - sentBytes);
+        if (writeRes <= 0)
+            perror("calling write");
+        else
+            sentBytes += writeRes;
+    }
 }
 
 void johnny_handles_requests(struct socket_context* ctx, int epfd) {
