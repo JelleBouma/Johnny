@@ -186,9 +186,8 @@ void johnny_handles_listening(struct socket_context* ctx, int epfd) {
     else { // connection made
         con_ctx->handler = johnny_handles_requests;
         con_ctx->rnrnget_slash_counter = 4;
-        if (fcntl(con_ctx->fd, F_SETFL, O_NONBLOCK)){
+        if (fcntl(con_ctx->fd, F_SETFL, O_NONBLOCK))
             perror("calling fcntl");
-        }
         struct epoll_event* ev = malloc(sizeof(struct epoll_event));
         ev->data.ptr = con_ctx;
         ev->events = EPOLLIN | EPOLLET;
@@ -202,7 +201,8 @@ void johnny_worker(int* server_fd) {
     int epfd = epoll_create1(0);
     ev.data.ptr = &listen_ctx;
     ev.events = EPOLLIN | EPOLLET;
-    epoll_ctl(epfd, EPOLL_CTL_ADD, *server_fd, &ev);
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, *server_fd, &ev))
+        perror("calling epoll_ctl");
     while(true) {
         unsigned int nfds = epoll_wait(epfd, evs, 1024, -1);
 
@@ -286,7 +286,7 @@ int main(int argc, char* argv[]) {
 
     char* dir_name = argv[3];
     int* server_fd = malloc(sizeof(int));
-    struct sockaddr_in server_addr;
+    struct sockaddr_in server_sudaddr;
 
     unsigned int johnny_file_count = count_files(dir_name);
     printf("johnny files: %d\n", johnny_file_count);
