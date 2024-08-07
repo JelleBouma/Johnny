@@ -288,7 +288,7 @@ int main(int argc, char* argv[]) {
 
     char* dir_name = argv[3];
     int* server_fd = malloc(sizeof(int));
-    struct sockaddr_in server_sudaddr;
+    struct sockaddr_in server_addr;
 
     unsigned int johnny_file_count = count_files(dir_name);
     printf("johnny files: %d\n", johnny_file_count);
