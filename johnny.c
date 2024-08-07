@@ -199,6 +199,8 @@ void johnny_worker(int* server_fd) {
     struct epoll_event ev, evs[1024];
     struct socket_context listen_ctx = { .fd = *server_fd, .handler = johnny_handles_listening };
     int epfd = epoll_create1(0);
+    if (epfd == -1)
+        perror("calling epoll_create1");
     ev.data.ptr = &listen_ctx;
     ev.events = EPOLLIN | EPOLLET;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, *server_fd, &ev))
