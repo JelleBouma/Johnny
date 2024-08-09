@@ -31,8 +31,8 @@ struct socket_context {
 struct johnny_file* johnny_files;
 cmph_t* johnny_hash;
 
-const char* get_file_extension(const char *file_name) {
-    const char *dot = strrchr(file_name, '.');
+char* get_file_extension(const char *file_name) {
+    char *dot = strrchr(file_name, '.');
     if (!dot || dot == file_name) {
         return "";
     }
@@ -128,6 +128,17 @@ const char* get_mime_type(const char *file_ext) {
     return "application/octet-stream";
 }
 
+const char* get_content_encoding(const char *file_ext) {
+    if (!strcasecmp(file_ext, "gz"))
+        return "gzip";
+    if (!strcasecmp(file_ext, "br"))
+        return "br";
+    if (!strcasecmp(file_ext, "zstd"))
+        return "zstd";
+
+    return NULL;
+}
+
 void johnny_sends_response(int client_fd, char* file_name) {
     unsigned int index = cmph_search(johnny_hash, file_name, strlen(file_name));
     struct johnny_file johnny_file = johnny_files[index];
@@ -220,16 +231,27 @@ void johnny_worker(int* server_fd) {
     }
 }
 
-struct johnny_file johnny_slurps_file(const char* file_path, const char* file_name) {
-    const char* file_ext = get_file_extension(file_name);
+struct johnny_file johnny_slurps_file(const char* file_path, char* file_name) {
+    char* file_ext = get_file_extension(file_name);
+
+    const char* content_encoding = NULL;
+    if (strlen(file_ext) > 0) {
+        content_encoding = get_content_encoding(file_ext);
+        if (content_encoding != NULL) {
+            file_name[strlen(file_name) - strlen(file_ext) - 1] = '\0';
+            file_ext = get_file_extension(file_name);
+        }
+    }
     const char* mime_type = get_mime_type(file_ext);
-    const char* header_format = "HTTP/1.1 200 OK\r\nContent-Type: %s\r\nContent-length: %lu\r\n\r\n";
+    char temp_header_buffer[1024];
+    sprintf(temp_header_buffer, "HTTP/1.1 200 OK\r\nContent-Type: %s\r\n", mime_type);
+    if (content_encoding != NULL)
+        sprintf(temp_header_buffer + strlen(temp_header_buffer), "Content-Encoding: %s\r\n", content_encoding);
 
     unsigned char* buf;
     size_t file_size = slurp(file_path, &buf);
+    sprintf(temp_header_buffer + strlen(temp_header_buffer), "Content-Length: %lu\r\n\r\n", file_size);
 
-    char temp_header_buffer[1024];
-    sprintf(temp_header_buffer, header_format, mime_type, file_size);
     const size_t response_length = strlen(temp_header_buffer) + file_size;
     char* response = malloc(response_length);
     memcpy(response, temp_header_buffer, response_length - file_size);
