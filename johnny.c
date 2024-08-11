@@ -161,7 +161,7 @@ void johnny_sends_response(int client_fd, char* file_name) {
 
 void johnny_handles_requests(struct socket_context* ctx, int epfd) {
     ssize_t bytes_received = 1;
-    unsigned int bytes_parsed = 1;
+    int bytes_parsed = 1;
     while (bytes_received > 0) {
         if (bytes_parsed >= bytes_received) {
             unsigned int buffer_offset = ctx->rnrnget_slash_counter > 9 ? ctx->rnrnget_slash_counter - 9 : 0;
