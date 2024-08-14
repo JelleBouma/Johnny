@@ -31,9 +31,8 @@ struct socket_context {
     void (*handler)(struct socket_context*, int);
 };
 
-struct johnny_file* JOHNNY_FILES;
-cmph_t* JOHNNY_HASH;
-int PORT;
+struct johnny_file* johnny_files;
+cmph_t* johnny_hash;
 
 char* get_file_extension(const char *file_name) {
     char *dot = strrchr(file_name, '.');
@@ -144,8 +143,8 @@ const char* get_content_encoding(const char *file_ext) {
 }
 
 int johnny_sends_response(int client_fd, char* file_name) {
-    cmph_uint32 index = cmph_search(JOHNNY_HASH, file_name, strlen(file_name));
-    struct johnny_file johnny_file = JOHNNY_FILES[index];
+    cmph_uint32 index = cmph_search(johnny_hash, file_name, strlen(file_name));
+    struct johnny_file johnny_file = johnny_files[index];
 
     // build response
     const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
@@ -246,61 +245,15 @@ void johnny_handles_listening(struct socket_context* ctx, int epfd) {
     }
 }
 
-int johnny_worker_setup() {
-    // create server socket
-    int server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-    if (server_fd < 0) {
-        perror("calling socket");
-        exit(EXIT_FAILURE);
-    }
-
-    // config socket
-    struct sockaddr_in server_addr;
-    server_addr.sin_family = AF_INET;
-    server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(PORT);
-    memset(server_addr.sin_zero, 0, 8);
-
-    // lose the pesky "Address already in use" error message
-    int yes=1;
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) == -1) {
-        perror("calling setsockopt SO_REUSEADDR");
-        exit(1);
-    }
-
-    // bind multiple sockets to a single port
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof yes) == -1) {
-        perror("calling setsockopt SO_REUSEPORT");
-        exit(1);
-    }
-
-    // bind socket to port
-    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-        perror("calling bind");
-        exit(EXIT_FAILURE);
-    }
-
-    // listen for connections
-    if (listen(server_fd, 1024) < 0) {
-        perror("calling listen");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("Johnny listening on port %d\n", PORT);
-
-    return server_fd;
-}
-
-void johnny_worker() {
-    int server_fd = johnny_worker_setup();
+void johnny_worker(int* server_fd) {
     struct epoll_event ev, evs[1024];
-    struct socket_context listen_ctx = { .fd = server_fd, .handler = johnny_handles_listening };
+    struct socket_context listen_ctx = { .fd = *server_fd, .handler = johnny_handles_listening };
     int epfd = epoll_create1(0);
     if (epfd == -1)
         perror("calling epoll_create1");
     ev.data.ptr = &listen_ctx;
     ev.events = EPOLLIN | EPOLLET;
-    if (epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev))
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, *server_fd, &ev))
         perror("calling epoll_ctl");
     while(true) {
         int nfds = epoll_wait(epfd, evs, 1024, -1);
@@ -366,7 +319,7 @@ int johnny_slurps_files(char* base_dir, char* rel_dir, int file_counter) {
                 strcpy(rel_path, rel_dir);
                 if ((sb.st_mode & S_IFMT) == S_IFREG) {
                     strcat(rel_path, dir_ent->d_name);
-                    JOHNNY_FILES[file_counter] = johnny_slurps_file(full_path, rel_path);
+                    johnny_files[file_counter] = johnny_slurps_file(full_path, rel_path);
                     file_counter++;
                 }
                 else if ((sb.st_mode & S_IFMT) == S_IFDIR) {
@@ -383,41 +336,43 @@ int johnny_slurps_files(char* base_dir, char* rel_dir, int file_counter) {
 void reorder_johnny_files(int johnny_file_count) {
     struct johnny_file* reordered_johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
     for (int move_from = 0; move_from < johnny_file_count; move_from++) {
-        int move_to = cmph_search(JOHNNY_HASH, JOHNNY_FILES[move_from].url_encoded_file_name, strlen(JOHNNY_FILES[move_from].url_encoded_file_name));
-        reordered_johnny_files[move_to] = JOHNNY_FILES[move_from];
+        int move_to = cmph_search(johnny_hash, johnny_files[move_from].url_encoded_file_name, strlen(johnny_files[move_from].url_encoded_file_name));
+        reordered_johnny_files[move_to] = johnny_files[move_from];
     }
-    free(JOHNNY_FILES);
-    JOHNNY_FILES = reordered_johnny_files;
+    free(johnny_files);
+    johnny_files = reordered_johnny_files;
 }
 
 int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    PORT = atoi(argv[1]);
+    int port = atoi(argv[1]);
     int thread_cnt = atoi(argv[2]);
 
     char* dir_name = argv[3];
+    int* server_fd = malloc(sizeof(int));
+    struct sockaddr_in server_addr;
 
     int johnny_file_count = count_files(dir_name);
     printf("johnny files: %d\n", johnny_file_count);
     if (johnny_file_count == 0)
         return EXIT_FAILURE;
-    JOHNNY_FILES = malloc(johnny_file_count * sizeof(struct johnny_file));
+    johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
     johnny_slurps_files(dir_name, "", 0);
 
     // Creating a filled vector
     char* vector[johnny_file_count];
     int total_strings_length = 0;
     for (int file_counter = 0; file_counter < johnny_file_count; file_counter++) {
-        total_strings_length += strlen(JOHNNY_FILES[file_counter].url_encoded_file_name) + 1;
+        total_strings_length += strlen(johnny_files[file_counter].url_encoded_file_name) + 1;
     }
     printf("total file names length: %d\n", total_strings_length);
     char* contiguous_block_of_url_encoded_file_names = malloc(total_strings_length);
     int string_offset = 0;
     for (int file_counter = 0; file_counter < johnny_file_count; file_counter++) {
-        int inclusive_string_length = strlen(JOHNNY_FILES[file_counter].url_encoded_file_name) + 1;
-        memcpy(contiguous_block_of_url_encoded_file_names + string_offset, JOHNNY_FILES[file_counter].url_encoded_file_name, inclusive_string_length);
-        free(JOHNNY_FILES[file_counter].url_encoded_file_name);
-        JOHNNY_FILES[file_counter].url_encoded_file_name = contiguous_block_of_url_encoded_file_names + string_offset;
+        int inclusive_string_length = strlen(johnny_files[file_counter].url_encoded_file_name) + 1;
+        memcpy(contiguous_block_of_url_encoded_file_names + string_offset, johnny_files[file_counter].url_encoded_file_name, inclusive_string_length);
+        free(johnny_files[file_counter].url_encoded_file_name);
+        johnny_files[file_counter].url_encoded_file_name = contiguous_block_of_url_encoded_file_names + string_offset;
         vector[file_counter] = contiguous_block_of_url_encoded_file_names + string_offset;
         string_offset += inclusive_string_length;
     }
@@ -430,17 +385,57 @@ int main(int argc, char* argv[]) {
     printf("setting chd as algo to use\n");
     cmph_config_set_algo(config, CMPH_CHD);
     printf("creating hash function\n");
-    JOHNNY_HASH = cmph_new(config);
+    johnny_hash = cmph_new(config);
     printf("destroying config\n");
     cmph_config_destroy(config);
     printf("reordering files\n");
     reorder_johnny_files(johnny_file_count);
 
+    // create server socket
+    if ((*server_fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0)) < 0) {
+        perror("socket failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // config socket
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(port);
+    memset(server_addr.sin_zero, 0, 8);
+
+    // lose the pesky "Address already in use" error message
+    int yes=1;
+    if (setsockopt(*server_fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes) == -1) {
+        perror("setsockopt");
+        exit(1);
+    }
+
+    // bind all threads to a single port
+    if (setsockopt(*server_fd,SOL_SOCKET,SO_REUSEADDR,&yes,sizeof yes) == -1) {
+        perror("setsockopt");
+        exit(1);
+    }
+
+    // bind socket to port
+    if (bind(*server_fd,
+            (struct sockaddr *)&server_addr,
+            sizeof(server_addr)) < 0) {
+        perror("bind failed");
+        exit(EXIT_FAILURE);
+    }
+
+    // listen for connections
+    if (listen(*server_fd, 1024) < 0) {
+        perror("listen failed");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Johnny listening on port %d\n", port);
     for (int thread_ctr = 0; thread_ctr < thread_cnt - 1; thread_ctr++) {
         // create a new thread to handle client request
         pthread_t thread_id;
-        pthread_create(&thread_id, NULL, johnny_worker, NULL);
+        pthread_create(&thread_id, NULL, johnny_worker, server_fd);
         pthread_detach(thread_id);
     }
-    johnny_worker();
+    johnny_worker(server_fd);
 }
