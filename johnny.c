@@ -173,6 +173,7 @@ void johnny_closes_connection(struct socket_context* ctx, int epfd) {
 }
 
 void johnny_handles_requests(struct socket_context* ctx, int epfd) {
+    float startTime = (float)clock()/CLOCKS_PER_SEC;
     ssize_t bytes_received = 1;
     int bytes_parsed = 1;
     while (bytes_received > 0) {
@@ -186,6 +187,7 @@ void johnny_handles_requests(struct socket_context* ctx, int epfd) {
                 for (; bytes_parsed < bytes_received; bytes_parsed++) {
                     if (ctx->buffer[bytes_parsed] == ' ') { // end of file name
                         ctx->buffer[bytes_parsed] = '\0';
+                        printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 2 - 57 us
                         if (johnny_sends_response(ctx->fd, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9)) {
                             perror("calling johnny_sends_response");
                             johnny_closes_connection(ctx, epfd);
@@ -307,8 +309,10 @@ void johnny_worker() {
         if (nfds < 0)
             perror("calling epoll_wait");
         for (int i = 0; i < nfds; i++) {
+            float startTime = (float)clock()/CLOCKS_PER_SEC;
             struct socket_context* ctx = evs[i].data.ptr;
             ctx->handler(evs[i].data.ptr, epfd);
+            printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd - server_fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 15 - 83 us, request 31 - 1127 us, timer 60 - 262 us
         }
     }
 }
