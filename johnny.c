@@ -17,22 +17,26 @@
 #include "file_io.h"
 #include "cmph/src/cmph.h"
 
+#define JOHNNY_BUFFER_SIZE 1024
+#define JOHNNY_PORT 5001
+#define JOHNNY_THREAD_COUNT 12
+#define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
+
 struct johnny_file {
     char* url_encoded_file_name;
     char* response;
     size_t response_length;
 };
 
-struct socket_context {
-    char buffer[1024];
+struct connection_context {
+    char buffer[JOHNNY_BUFFER_SIZE];
     int fd;
+    int index;
     int rnrnget_slash_counter;
-    struct socket_context* joint_context;
 };
 
 struct johnny_file* JOHNNY_FILES;
 cmph_t* JOHNNY_HASH;
-int PORT;
 
 char* get_file_extension(const char *file_name) {
     char *dot = strrchr(file_name, '.');
@@ -164,8 +168,8 @@ int johnny_sends_response(int client_fd, char* file_name) {
     return 0;
 }
 
-void johnny_handles_requests(struct socket_context* ctx) {
-    float startTime = (float)clock()/CLOCKS_PER_SEC;
+void johnny_handles_requests(struct connection_context* ctx) {
+    //float startTime = (float)clock()/CLOCKS_PER_SEC;
     ssize_t bytes_received = 1;
     int bytes_parsed = 1;
     while (bytes_received > 0) {
@@ -179,7 +183,7 @@ void johnny_handles_requests(struct socket_context* ctx) {
                 for (; bytes_parsed < bytes_received; bytes_parsed++) {
                     if (ctx->buffer[bytes_parsed] == ' ') { // end of file name
                         ctx->buffer[bytes_parsed] = '\0';
-                        printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 1 - 57 us
+                        //printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 1 - 57 us
                         if (johnny_sends_response(ctx->fd, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9)) {
                             perror("calling johnny_sends_response");
                             close(ctx->fd);
@@ -219,7 +223,7 @@ int johnny_worker_setup() {
     struct sockaddr_in server_addr;
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(PORT);
+    server_addr.sin_port = htons(JOHNNY_PORT);
     memset(server_addr.sin_zero, 0, 8);
 
     // lose the pesky "Address already in use" error message
@@ -247,7 +251,7 @@ int johnny_worker_setup() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Johnny listening on port %d\n", PORT);
+    printf("Johnny listening on port %d\n", JOHNNY_PORT);
 
     return server_fd;
 }
@@ -255,7 +259,7 @@ int johnny_worker_setup() {
 void johnny_worker() {
     int server_fd = johnny_worker_setup();
     struct epoll_event ev, evs[1024];
-    struct socket_context con_ctx[1024], timer_ctx[1024];
+    struct connection_context con_ctx[1024], timer_ctx[1024];
     struct epoll_event con_ev[1024], timer_ev[1024];
     struct itimerspec timer_spec = { .it_interval = {.tv_sec = 5, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = 5}};
     int connections = 0;
@@ -271,7 +275,7 @@ void johnny_worker() {
         if (nfds < 0)
             perror("calling epoll_wait");
         for (int i = 0; i < nfds; i++) {
-            float startTime = (float)clock()/CLOCKS_PER_SEC;
+            //float startTime = (float)clock()/CLOCKS_PER_SEC;
             if (evs[i].data.ptr == &server_fd) {
                 int fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK);
                 if (fd != -1) { // connection made
@@ -296,7 +300,7 @@ void johnny_worker() {
                     connections++;
                     connections %= 1024;
                 }
-                printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 4 - 11 us
+                //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 3 - 14 us
             }
             else {
                 johnny_handles_requests(evs[i].data.ptr);
@@ -386,17 +390,13 @@ void reorder_johnny_files(int johnny_file_count) {
 
 int main(int argc, char* argv[]) {
     setvbuf(stdout, NULL, _IONBF, 0);
-    PORT = atoi(argv[1]);
-    int thread_cnt = atoi(argv[2]);
 
-    char* dir_name = argv[3];
-
-    int johnny_file_count = count_files(dir_name);
+    int johnny_file_count = count_files(JOHNNY_ROOT);
     printf("johnny files: %d\n", johnny_file_count);
     if (johnny_file_count == 0)
         return EXIT_FAILURE;
     JOHNNY_FILES = malloc(johnny_file_count * sizeof(struct johnny_file));
-    johnny_slurps_files(dir_name, "", 0);
+    johnny_slurps_files(JOHNNY_ROOT, "", 0);
 
     // Creating a filled vector
     char* vector[johnny_file_count];
@@ -430,11 +430,20 @@ int main(int argc, char* argv[]) {
     printf("reordering files\n");
     reorder_johnny_files(johnny_file_count);
 
-    for (int thread_ctr = 0; thread_ctr < thread_cnt - 1; thread_ctr++) {
+    int core_cnt = sysconf(_SC_NPROCESSORS_ONLN);
+    for (int core_id = 1; core_id < core_cnt; core_id++) {
         // create a new thread to handle client request
         pthread_t thread_id;
         pthread_create(&thread_id, NULL, johnny_worker, NULL);
+        cpu_set_t cpuset;
+        CPU_ZERO(&cpuset);
+        CPU_SET(core_id, &cpuset);
+        pthread_setaffinity_np(thread_id, sizeof(cpu_set_t), &cpuset);
         pthread_detach(thread_id);
     }
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(0, &cpuset);
+    pthread_setaffinity_np(pthread_self(), sizeof(cpu_set_t), &cpuset);
     johnny_worker();
 }
