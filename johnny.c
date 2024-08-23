@@ -28,7 +28,6 @@ struct socket_context {
     int fd;
     int rnrnget_slash_counter;
     struct socket_context* joint_context;
-    void (*handler)(struct socket_context*, int);
 };
 
 struct johnny_file* JOHNNY_FILES;
@@ -165,12 +164,7 @@ int johnny_sends_response(int client_fd, char* file_name) {
     return 0;
 }
 
-void johnny_closes_connection(struct socket_context* ctx, int epfd) {
-    close(ctx->joint_context->fd);
-    close(ctx->fd);
-}
-
-void johnny_handles_requests(struct socket_context* ctx, int epfd) {
+void johnny_handles_requests(struct socket_context* ctx) {
     float startTime = (float)clock()/CLOCKS_PER_SEC;
     ssize_t bytes_received = 1;
     int bytes_parsed = 1;
@@ -185,10 +179,10 @@ void johnny_handles_requests(struct socket_context* ctx, int epfd) {
                 for (; bytes_parsed < bytes_received; bytes_parsed++) {
                     if (ctx->buffer[bytes_parsed] == ' ') { // end of file name
                         ctx->buffer[bytes_parsed] = '\0';
-                        printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 2 - 57 us
+                        printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 1 - 57 us
                         if (johnny_sends_response(ctx->fd, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9)) {
                             perror("calling johnny_sends_response");
-                            johnny_closes_connection(ctx, epfd);
+                            close(ctx->fd);
                             return;
                         }
                         ctx->rnrnget_slash_counter = 0;
@@ -210,7 +204,7 @@ void johnny_handles_requests(struct socket_context* ctx, int epfd) {
         }
     }
     if (bytes_received == 0)
-        johnny_closes_connection(ctx, epfd);
+        close(ctx->fd);
 }
 
 int johnny_worker_setup() {
@@ -282,7 +276,6 @@ void johnny_worker() {
                 int fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK);
                 if (fd != -1) { // connection made
                     con_ctx[connections].fd = fd;
-                    con_ctx[connections].handler = johnny_handles_requests;
                     con_ctx[connections].rnrnget_slash_counter = 4;
                     //
                     // timer_ctx[connections].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
@@ -303,11 +296,10 @@ void johnny_worker() {
                     connections++;
                     connections %= 1024;
                 }
-                printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 15 - 83 us, request 31 - 1127 us, timer 60 - 262 us
+                printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 4 - 11 us
             }
             else {
-                struct socket_context* ctx = evs[i].data.ptr;
-                ctx->handler(evs[i].data.ptr, epfd);
+                johnny_handles_requests(evs[i].data.ptr);
                 //printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 15 - 83 us, request 31 - 1127 us, timer 60 - 262 us
             }
 
