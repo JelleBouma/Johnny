@@ -19,7 +19,6 @@
 
 #define JOHNNY_BUFFER_SIZE 1024
 #define JOHNNY_PORT 5001
-#define JOHNNY_THREAD_COUNT 12
 #define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
 
 struct johnny_file {
@@ -260,7 +259,6 @@ void johnny_worker() {
     int server_fd = johnny_worker_setup();
     struct epoll_event ev, evs[1024];
     struct connection_context con_ctx[1024], timer_ctx[1024];
-    struct epoll_event con_ev[1024], timer_ev[1024];
     struct itimerspec timer_spec = { .it_interval = {.tv_sec = 5, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = 5}};
     int connections = 0;
     int epfd = epoll_create1(0);
@@ -294,8 +292,7 @@ void johnny_worker() {
                     // timer_ev[connections].events = EPOLLIN | EPOLLET;
                     // epoll_ctl(epfd, EPOLL_CTL_ADD, timer_ctx[connections].fd, &timer_ev[connections]);
 
-                    con_ev[connections].data.ptr = &con_ctx[connections];
-                    con_ev[connections].events = EPOLLIN | EPOLLET;
+                    struct epoll_event con_ev = { .data.ptr = &con_ctx[connections], .events = EPOLLIN | EPOLLET};
                     epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx[connections].fd, &con_ev[connections]);
                     connections++;
                     connections %= 1024;
