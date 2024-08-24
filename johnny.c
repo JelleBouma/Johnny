@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <threads.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -18,8 +19,14 @@
 #include "cmph/src/cmph.h"
 
 #define JOHNNY_BUFFER_SIZE 1024
+#define JOHNNY_STACK_CONNECTIONS 1024
+#define JOHNNY_EVENTS_BUFFER 1024
 #define JOHNNY_PORT 5001
+#define JOHNNY_INACTIVE_CONNECTION_TIMEOUT 30
 #define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
+
+#define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
+#define JOHNNY_CON_BITMAP_LEN JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG
 
 struct johnny_file {
     char* url_encoded_file_name;
@@ -36,9 +43,10 @@ struct connection_context {
 
 struct johnny_file* JOHNNY_FILES;
 cmph_t* JOHNNY_HASH;
+thread_local long con_bitmap[JOHNNY_CON_BITMAP_LEN] = {0};
 
 char* get_file_extension(const char *file_name) {
-    char *dot = strrchr(file_name, '.');
+    char* dot = strrchr(file_name, '.');
     if (!dot || dot == file_name) {
         return "";
     }
@@ -48,9 +56,9 @@ char* get_file_extension(const char *file_name) {
 char* url_encode(const char* originalText)
 {
     // allocate memory for the worst possible case (all characters need to be encoded)
-    char *encodedText = (char *)malloc(sizeof(char)*strlen(originalText)*3+1);
+    char* encodedText = malloc(sizeof(char)*strlen(originalText)*3+1);
 
-    const char *hex = "0123456789abcdef";
+    const char* hex = "0123456789abcdef";
 
     int pos = 0;
     for (int i = 0; i < strlen(originalText); i++) {
@@ -145,6 +153,30 @@ const char* get_content_encoding(const char *file_ext) {
     return NULL;
 }
 
+int_fast32_t johnny_allocates_connection() {
+    int_fast32_t index = 0;
+    for (int_fast32_t bitmap_counter = 0; bitmap_counter < JOHNNY_CON_BITMAP_LEN; bitmap_counter++) {
+        if (con_bitmap[bitmap_counter] != -1) {
+            for (long bits = con_bitmap[bitmap_counter]; bits % 2 == 1; bits >>= 1) {
+                index++;
+            }
+            con_bitmap[bitmap_counter] |= 1 << index;
+            break;
+        }
+        index += JOHNNY_BITS_PER_LONG;
+    }
+    return index;
+}
+
+void johnny_deallocates_connection(int_fast32_t index) {
+    con_bitmap[index / JOHNNY_BITS_PER_LONG] ^= 1 << (index % JOHNNY_BITS_PER_LONG);
+}
+
+void johnny_closes_connection(struct connection_context* ctx) {
+    close(ctx->fd);
+    johnny_deallocates_connection(ctx->index);
+}
+
 int johnny_sends_response(int client_fd, char* file_name) {
     cmph_uint32 index = cmph_search(JOHNNY_HASH, file_name, strlen(file_name));
     struct johnny_file johnny_file = JOHNNY_FILES[index];
@@ -207,7 +239,7 @@ void johnny_handles_requests(struct connection_context* ctx) {
         }
     }
     if (bytes_received == 0)
-        close(ctx->fd);
+        johnny_closes_connection(ctx);
 }
 
 int johnny_worker_setup() {
@@ -257,10 +289,9 @@ int johnny_worker_setup() {
 
 void johnny_worker() {
     int server_fd = johnny_worker_setup();
-    struct epoll_event ev, evs[1024];
-    struct connection_context con_ctx[1024], timer_ctx[1024];
-    struct itimerspec timer_spec = { .it_interval = {.tv_sec = 5, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = 5}};
-    int connections = 0;
+    struct epoll_event ev, evs[JOHNNY_EVENTS_BUFFER];
+    struct connection_context con_ctx[JOHNNY_STACK_CONNECTIONS];
+    struct itimerspec timer_spec = { .it_interval = {.tv_sec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT}};
     int epfd = epoll_create1(0);
     if (epfd == -1)
         perror("calling epoll_create1");
@@ -269,16 +300,14 @@ void johnny_worker() {
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev))
         perror("calling epoll_ctl");
     while(true) {
-        int nfds = epoll_wait(epfd, evs, 1024, -1);
+        int nfds = epoll_wait(epfd, evs, JOHNNY_EVENTS_BUFFER, -1);
         if (nfds < 0)
             perror("calling epoll_wait");
         for (int i = 0; i < nfds; i++) {
-            //float startTime = (float)clock()/CLOCKS_PER_SEC;
+            //float start_time = (float)clock()/CLOCKS_PER_SEC;
             if (evs[i].data.ptr == &server_fd) {
                 int fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK);
                 if (fd != -1) { // connection made
-                    con_ctx[connections].fd = fd;
-                    con_ctx[connections].rnrnget_slash_counter = 4;
                     //
                     // timer_ctx[connections].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
                     //
@@ -291,17 +320,18 @@ void johnny_worker() {
                     // timer_ev[connections].data.ptr = &timer_ctx[connections];
                     // timer_ev[connections].events = EPOLLIN | EPOLLET;
                     // epoll_ctl(epfd, EPOLL_CTL_ADD, timer_ctx[connections].fd, &timer_ev[connections]);
-
-                    struct epoll_event con_ev = { .data.ptr = &con_ctx[connections], .events = EPOLLIN | EPOLLET};
-                    epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx[connections].fd, &con_ev[connections]);
-                    connections++;
-                    connections %= 1024;
+                    const int_fast32_t index = johnny_allocates_connection();
+                    con_ctx[index].index = index;
+                    con_ctx[index].fd = fd;
+                    con_ctx[index].rnrnget_slash_counter = 4;
+                    struct epoll_event con_ev = { .data.ptr = &con_ctx[index], .events = EPOLLIN | EPOLLET};
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx[index].fd, &con_ev);
                 }
-                //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 3 - 14 us
+                //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - start_time); // listen 5 - 29 us
             }
             else {
                 johnny_handles_requests(evs[i].data.ptr);
-                //printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd, (float)clock()/CLOCKS_PER_SEC - startTime); // listen 15 - 83 us, request 31 - 1127 us, timer 60 - 262 us
+                //printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd, (float)clock()/CLOCKS_PER_SEC - startTime); // request 31 - 1127 us, timer 60 - 262 us
             }
 
         }
