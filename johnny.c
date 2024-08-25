@@ -202,9 +202,10 @@ int johnny_sends_response(int client_fd, char* file_name) {
     // send HTTP response to client
     size_t sentBytes = 0;
     while (sentBytes < response_length) {
-        int writeRes = write(client_fd, response + sentBytes, response_length - sentBytes);
+        int flags = response_length > 10240 ? MSG_DONTWAIT | MSG_NOSIGNAL | MSG_ZEROCOPY : MSG_DONTWAIT | MSG_NOSIGNAL;
+        int writeRes = send(client_fd, response + sentBytes, response_length - sentBytes, flags);
         if (writeRes <= 0) {
-            perror("calling write");
+            perror("calling send");
             return -1;
         }
         sentBytes += writeRes;
@@ -271,7 +272,7 @@ int johnny_worker_setup() {
     memset(server_addr.sin_zero, 0, 8);
 
     // lose the pesky "Address already in use" error message
-    int yes=1;
+    int yes = 1;
     if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof yes) == -1) {
         perror("calling setsockopt SO_REUSEADDR");
         exit(1);
@@ -320,6 +321,9 @@ void johnny_worker() {
             if (evs[i].data.ptr == &server_fd) {
                 int fd = accept4(server_fd, NULL, NULL, SOCK_NONBLOCK);
                 if (fd != -1) { // connection made
+                    int yes = 1;
+                    if (setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &yes, sizeof(yes)))
+                        perror("calling setsockopt zerocopy");
                     //
                     // timer_ctx[connections].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
                     //
