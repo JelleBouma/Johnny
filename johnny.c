@@ -23,7 +23,7 @@
 #define JOHNNY_EVENTS_BUFFER 1024
 #define JOHNNY_PORT 5001
 #define JOHNNY_INACTIVE_CONNECTION_TIMEOUT 30
-#define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
+#define JOHNNY_ROOT "/home/pi/Skeletron/johnnyroot/"
 
 #define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
 #define JOHNNY_CON_BITMAP_LEN (JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG)
@@ -44,6 +44,7 @@ struct connection_context {
 struct johnny_file* JOHNNY_FILES;
 cmph_t* JOHNNY_HASH;
 thread_local long con_bitmap[JOHNNY_CON_BITMAP_LEN] = {0};
+thread_local struct connection_context con_ctx[JOHNNY_STACK_CONNECTIONS];
 
 char* get_file_extension(const char *file_name) {
     char* dot = strrchr(file_name, '.');
@@ -153,7 +154,7 @@ const char* get_content_encoding(const char *file_ext) {
     return NULL;
 }
 
-int_fast32_t johnny_allocates_connection() {
+int_fast32_t johnny_tries_to_allocate_connection_on_stack() {
     int_fast32_t index = 0;
     for (int_fast32_t bitmap_counter = 0; bitmap_counter < JOHNNY_CON_BITMAP_LEN; bitmap_counter++) {
         if (con_bitmap[bitmap_counter] != -1) {
@@ -168,13 +169,25 @@ int_fast32_t johnny_allocates_connection() {
     return index;
 }
 
-void johnny_deallocates_connection(int_fast32_t index) {
-    con_bitmap[index / JOHNNY_BITS_PER_LONG] ^= 1 << (index % JOHNNY_BITS_PER_LONG);
+struct connection_context* johnny_allocates_connection(int_fast32_t fd) {
+    int_fast32_t index = johnny_tries_to_allocate_connection_on_stack();
+    struct connection_context* new_con = index == JOHNNY_STACK_CONNECTIONS ? malloc(sizeof(struct connection_context)) : con_ctx[index];
+    new_con->index = index;
+    new_con->rnrnget_slash_counter = 4;
+    new_con->fd = fd;
+    return new_con;
+}
+
+void johnny_deallocates_connection(struct connection_context* ctx) {
+    if (ctx->index == JOHNNY_STACK_CONNECTIONS)
+        free(ctx);
+    else
+        con_bitmap[ctx->index / JOHNNY_BITS_PER_LONG] ^= 1 << (ctx->index % JOHNNY_BITS_PER_LONG);
 }
 
 void johnny_closes_connection(struct connection_context* ctx) {
     close(ctx->fd);
-    johnny_deallocates_connection(ctx->index);
+    johnny_deallocates_connection(ctx);
 }
 
 int johnny_sends_response(int client_fd, char* file_name) {
@@ -290,7 +303,6 @@ int johnny_worker_setup() {
 void johnny_worker() {
     int server_fd = johnny_worker_setup();
     struct epoll_event ev, evs[JOHNNY_EVENTS_BUFFER];
-    struct connection_context con_ctx[JOHNNY_STACK_CONNECTIONS];
     struct itimerspec timer_spec = { .it_interval = {.tv_sec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT}};
     int epfd = epoll_create1(0);
     if (epfd == -1)
@@ -320,12 +332,9 @@ void johnny_worker() {
                     // timer_ev[connections].data.ptr = &timer_ctx[connections];
                     // timer_ev[connections].events = EPOLLIN | EPOLLET;
                     // epoll_ctl(epfd, EPOLL_CTL_ADD, timer_ctx[connections].fd, &timer_ev[connections]);
-                    const int_fast32_t index = johnny_allocates_connection();
-                    con_ctx[index].index = index;
-                    con_ctx[index].fd = fd;
-                    con_ctx[index].rnrnget_slash_counter = 4;
-                    struct epoll_event con_ev = { .data.ptr = &con_ctx[index], .events = EPOLLIN | EPOLLET};
-                    epoll_ctl(epfd, EPOLL_CTL_ADD, con_ctx[index].fd, &con_ev);
+                    struct connection_context* con = johnny_allocates_connection(fd);
+                    struct epoll_event con_ev = { .data.ptr = con, .events = EPOLLIN | EPOLLET};
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &con_ev);
                 }
                 //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - start_time); // listen 5 - 29 us
             }
