@@ -26,7 +26,7 @@
 #define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
 
 #define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
-#define JOHNNY_CON_BITMAP_LEN JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG
+#define JOHNNY_CON_BITMAP_LEN (JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG)
 
 struct johnny_file {
     char* url_encoded_file_name;
@@ -357,7 +357,7 @@ struct johnny_file johnny_slurps_file(const char* file_path, char* file_name) {
 
     unsigned char* buf;
     size_t file_size = slurp(file_path, &buf);
-    sprintf(temp_header_buffer + strlen(temp_header_buffer), "Content-Length: %lu\r\n\r\n", file_size);
+    sprintf(temp_header_buffer + strlen(temp_header_buffer), "Content-Length: %zu\r\n\r\n", file_size);
 
     const size_t response_length = strlen(temp_header_buffer) + file_size;
     char* response = malloc(response_length);
@@ -408,7 +408,7 @@ int johnny_slurps_files(char* base_dir, char* rel_dir, int file_counter) {
 void reorder_johnny_files(int johnny_file_count) {
     struct johnny_file* reordered_johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
     for (int move_from = 0; move_from < johnny_file_count; move_from++) {
-        int move_to = cmph_search(JOHNNY_HASH, JOHNNY_FILES[move_from].url_encoded_file_name, strlen(JOHNNY_FILES[move_from].url_encoded_file_name));
+        cmph_uint32 move_to = cmph_search(JOHNNY_HASH, JOHNNY_FILES[move_from].url_encoded_file_name, strlen(JOHNNY_FILES[move_from].url_encoded_file_name));
         reordered_johnny_files[move_to] = JOHNNY_FILES[move_from];
     }
     free(JOHNNY_FILES);
