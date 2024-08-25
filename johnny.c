@@ -23,7 +23,7 @@
 #define JOHNNY_EVENTS_BUFFER 1024
 #define JOHNNY_PORT 5001
 #define JOHNNY_INACTIVE_CONNECTION_TIMEOUT 30
-#define JOHNNY_ROOT "/home/pi/Skeletron/johnnyroot/"
+#define JOHNNY_ROOT "/mnt/c/Users/JelleBouma/pictures/"
 
 #define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
 #define JOHNNY_CON_BITMAP_LEN (JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG)
