@@ -171,7 +171,7 @@ int_fast32_t johnny_tries_to_allocate_connection_on_stack() {
 
 struct connection_context* johnny_allocates_connection(int_fast32_t fd) {
     int_fast32_t index = johnny_tries_to_allocate_connection_on_stack();
-    struct connection_context* new_con = index == JOHNNY_STACK_CONNECTIONS ? malloc(sizeof(struct connection_context)) : con_ctx[index];
+    struct connection_context* new_con = index == JOHNNY_STACK_CONNECTIONS ? malloc(sizeof(struct connection_context)) : &con_ctx[index];
     new_con->index = index;
     new_con->rnrnget_slash_counter = 4;
     new_con->fd = fd;
