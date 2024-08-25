@@ -15,6 +15,7 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <sys/timerfd.h>
+#include <aio.h>
 #include "file_io.h"
 #include "cmph/src/cmph.h"
 
@@ -200,16 +201,16 @@ int johnny_sends_response(int client_fd, char* file_name) {
     const size_t response_length = found ? johnny_file.response_length : strlen(response);
 
     // send HTTP response to client
-    size_t sentBytes = 0;
-    while (sentBytes < response_length) {
-        int writeRes = write(client_fd, response + sentBytes, response_length - sentBytes);
-        if (writeRes <= 0) {
-            perror("calling write");
-            return -1;
-        }
-        sentBytes += writeRes;
-    }
-    return 0;
+    struct aiocb aiocb = {0};
+    aiocb.aio_fildes = client_fd;
+    aiocb.aio_buf = response;
+    aiocb.aio_nbytes = response_length;
+    printf("start aio");
+    int writeRes = aio_write(&aiocb);
+    printf("end aio");
+    if (writeRes)
+        perror("calling aio_write");
+    return writeRes;
 }
 
 void johnny_handles_requests(struct connection_context* ctx) {
