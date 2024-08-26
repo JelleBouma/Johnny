@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 #include <arpa/inet.h>
 #include <dirent.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <pthread.h>
@@ -39,6 +40,9 @@ struct connection_context {
     int fd;
     int index;
     int rnrnget_slash_counter;
+    const char* response;
+    size_t response_length;
+    int buffer_remaining;
 };
 
 struct johnny_file* JOHNNY_FILES;
@@ -174,6 +178,8 @@ struct connection_context* johnny_allocates_connection(int_fast32_t fd) {
     struct connection_context* new_con = index == JOHNNY_STACK_CONNECTIONS ? malloc(sizeof(struct connection_context)) : &con_ctx[index];
     new_con->index = index;
     new_con->rnrnget_slash_counter = 4;
+    new_con->response_length = 0;
+    new_con->buffer_remaining = 0;
     new_con->fd = fd;
     return new_con;
 }
@@ -190,7 +196,19 @@ void johnny_closes_connection(struct connection_context* ctx) {
     johnny_deallocates_connection(ctx);
 }
 
-int johnny_sends_response(int client_fd, char* file_name) {
+int johnny_sends_bytes(int fd, const char *response, const size_t response_length) {
+    size_t sentBytes = 0;
+    while (sentBytes < response_length) {
+        int flags = response_length - sentBytes > 10240 ? MSG_DONTWAIT | MSG_NOSIGNAL | MSG_ZEROCOPY : MSG_DONTWAIT | MSG_NOSIGNAL;
+        int writeRes = send(fd, response + sentBytes, response_length - sentBytes, flags);
+        if (writeRes <= 0)
+            break;
+        sentBytes += writeRes;
+    }
+    return sentBytes;
+}
+
+int johnny_sends_response(struct connection_context* ctx, char* file_name, int epfd) {
     cmph_uint32 index = cmph_search(JOHNNY_HASH, file_name, strlen(file_name));
     struct johnny_file johnny_file = JOHNNY_FILES[index];
 
@@ -200,27 +218,37 @@ int johnny_sends_response(int client_fd, char* file_name) {
     const size_t response_length = found ? johnny_file.response_length : strlen(response);
 
     // send HTTP response to client
-    size_t sentBytes = 0;
-    while (sentBytes < response_length) {
-        int flags = response_length > 10240 ? MSG_DONTWAIT | MSG_NOSIGNAL | MSG_ZEROCOPY : MSG_DONTWAIT | MSG_NOSIGNAL;
-        int writeRes = send(client_fd, response + sentBytes, response_length - sentBytes, flags);
-        if (writeRes <= 0) {
-            perror("calling send");
-            return -1;
-        }
-        sentBytes += writeRes;
+    size_t sentBytes = johnny_sends_bytes(ctx->fd, response, response_length);
+    if (sentBytes < response_length) {
+        ctx->response = response + sentBytes;
+        ctx->response_length = response_length - sentBytes;
+        struct epoll_event ev = { .data.ptr = ctx, .events = EPOLLOUT | EPOLLET };
+        epoll_ctl(epfd, EPOLL_CTL_MOD, ctx->fd, &ev);
+        return -1;
     }
     return 0;
 }
 
-void johnny_handles_requests(struct connection_context* ctx) {
+void johnny_handles_requests(struct connection_context* ctx, int epfd) {
     //float startTime = (float)clock()/CLOCKS_PER_SEC;
+    if (ctx->response_length > 0) {
+        ctx->response_length -= johnny_sends_bytes(ctx->fd, ctx->response, ctx->response_length);
+        if (ctx->response_length == 0) {
+            struct epoll_event ev = { .data.ptr = ctx, .events = EPOLLIN | EPOLLET };
+            epoll_ctl(epfd, EPOLL_CTL_MOD, ctx->fd, &ev);
+        }
+    }
     ssize_t bytes_received = 1;
     int bytes_parsed = 1;
     while (bytes_received > 0) {
-        if (bytes_parsed >= bytes_received) {
+        if (ctx->buffer_remaining != 0) {
+            bytes_received = ctx->buffer_remaining;
+            ctx->buffer_remaining = 0;
+            bytes_parsed = 0;
+        }
+        else if (bytes_parsed >= bytes_received) {
             int buffer_offset = ctx->rnrnget_slash_counter > 9 ? ctx->rnrnget_slash_counter - 9 : 0;
-            bytes_received = recv(ctx->fd, ctx->buffer + buffer_offset, 1024 - buffer_offset, MSG_DONTWAIT);
+            bytes_received = recv(ctx->fd, ctx->buffer + buffer_offset, JOHNNY_BUFFER_SIZE - buffer_offset, MSG_DONTWAIT);
             bytes_parsed = 0;
         }
         for (; bytes_parsed < bytes_received; bytes_parsed++) {
@@ -229,9 +257,10 @@ void johnny_handles_requests(struct connection_context* ctx) {
                     if (ctx->buffer[bytes_parsed] == ' ') { // end of file name
                         ctx->buffer[bytes_parsed] = '\0';
                         //printf("johnny_handles_requests time to start responding in %f\r\n", (float)clock()/CLOCKS_PER_SEC - startTime); // 1 - 57 us
-                        if (johnny_sends_response(ctx->fd, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9)) {
-                            perror("calling johnny_sends_response");
-                            close(ctx->fd);
+                        if (johnny_sends_response(ctx, ctx->buffer + bytes_parsed - ctx->rnrnget_slash_counter + 9, epfd)) {
+                            memcpy(ctx->buffer, ctx->buffer + bytes_parsed, bytes_received - bytes_parsed);
+                            ctx->rnrnget_slash_counter = 0;
+                            ctx->buffer_remaining = bytes_received - bytes_parsed;
                             return;
                         }
                         ctx->rnrnget_slash_counter = 0;
@@ -343,7 +372,7 @@ void johnny_worker() {
                 //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - start_time); // listen 5 - 29 us
             }
             else {
-                johnny_handles_requests(evs[i].data.ptr);
+                johnny_handles_requests(evs[i].data.ptr, epfd);
                 //printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd, (float)clock()/CLOCKS_PER_SEC - startTime); // request 31 - 1127 us, timer 60 - 262 us
             }
 
