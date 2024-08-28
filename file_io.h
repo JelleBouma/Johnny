@@ -1,9 +1,6 @@
 #ifndef JOHNNY_FILE_IO_H
 #define JOHNNY_FILE_IO_H
 
-#include <stdlib.h>
-#include <stdio.h>
-
 /*
  * 'slurp' reads the file identified by 'path' into a character buffer
  * pointed at by 'buf' On success, the size of the file is returned; on

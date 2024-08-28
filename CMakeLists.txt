@@ -16,3 +16,5 @@ add_executable(Johnny johnny.c file_io.c file_io.h ${CMPH}
 
 target_link_libraries(Johnny PRIVATE m)
 target_link_libraries(Johnny PRIVATE pthread)
+
+add_compile_options(-Ofast)
