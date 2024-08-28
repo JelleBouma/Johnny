@@ -185,7 +185,7 @@ int johnny_slurps_files(char* base_dir, const char* rel_dir, int file_counter) {
     return file_counter;
 }
 
-void reorder_johnny_files(int johnny_file_count) {
+void reorder_johnny_files(const int johnny_file_count) {
     johnny_file* reordered_johnny_files = malloc(johnny_file_count * sizeof(struct johnny_file));
     for (int move_from = 0; move_from < johnny_file_count; move_from++) {
         const cmph_uint32 move_to = cmph_search(JOHNNY_HASH, JOHNNY_FILES[move_from].url_encoded_file_name, strlen(JOHNNY_FILES[move_from].url_encoded_file_name));
@@ -275,7 +275,7 @@ int johnny_setup_server() {
     }
 
     // bind socket to port
-    if (bind(server_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+    if (bind(server_fd, (struct sockaddr*)&server_addr, sizeof server_addr) < 0) {
         perror("calling bind");
         exit(EXIT_FAILURE);
     }
