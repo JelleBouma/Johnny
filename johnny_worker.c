@@ -181,44 +181,31 @@ hot void johnny_handles_requests(connection_context* ctx, const int epfd) {
 
 hot void johnny_works(const int* server_fd, const int epfd) {
     const int nfds = epoll_wait(epfd, ev_buf, JOHNNY_EVENTS_BUFFER, -1);
+    printf("johnny polled requests on epfd %i:\r\n", epfd);
+    for (int i = 0; i < nfds; i++)
+        if (ev_buf[i].data.ptr == server_fd)
+            printf("on fd: %i (server)\r\n", *(int*)ev_buf[i].data.ptr);
+        else
+            printf("on fd: %i\r\n", ((connection_context*)ev_buf[i].data.ptr)->fd);
     if (nfds < 0)
         perror("calling epoll_wait");
     for (int i = 0; i < nfds; i++) {
-        //float start_time = (float)clock()/CLOCKS_PER_SEC;
         if (ev_buf[i].data.ptr == server_fd) {
             const int fd = accept4(*server_fd, NULL, NULL, SOCK_NONBLOCK);
             if (fd != -1) { // connection made
-                // int yes = 1;
-                // if (setsockopt(fd, SOL_SOCKET, SO_ZEROCOPY, &yes, sizeof(yes)))
-                //     perror("calling setsockopt zerocopy");
-                //
-                // timer_ctx[connections].fd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-                //
-                // timerfd_settime(timer_ctx[connections].fd, 0, &timer_spec, NULL);
-                // timer_ctx[connections].handler = johnny_closes_connection;
-                //
-                // timer_ctx[connections].joint_context = &con_ctx[connections];
-                // con_ctx[connections].joint_context = &timer_ctx[connections];
-                //
-                // timer_ev[connections].data.ptr = &timer_ctx[connections];
-                // timer_ev[connections].events = EPOLLIN | EPOLLET;
-                // epoll_ctl(epfd, EPOLL_CTL_ADD, timer_ctx[connections].fd, &timer_ev[connections]);
                 connection_context* con = johnny_allocates_connection(fd);
                 struct epoll_event con_ev = { .data.ptr = con, .events = EPOLLIN | EPOLLET};
                 epoll_ctl(epfd, EPOLL_CTL_ADD, fd, &con_ev);
             }
-            //printf("johnny_listen fd %i time to handle in %f\r\n", fd, (float)clock()/CLOCKS_PER_SEC - start_time); // listen 5 - 29 us
         }
         else {
             johnny_handles_requests(ev_buf[i].data.ptr, epfd);
-            //printf("johnny_worker fd %i time to handle in %f\r\n", ctx->fd, (float)clock()/CLOCKS_PER_SEC - startTime); // request 31 - 1127 us, timer 60 - 262 us
         }
     }
 }
 
 noreturn void johnny_worker(int server_fd, const int epfd) {
-    struct itimerspec timer_spec = { .it_interval = {.tv_sec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT, .tv_nsec = 0}, .it_value = {.tv_sec = 5, .tv_nsec = JOHNNY_INACTIVE_CONNECTION_TIMEOUT}};
-    struct epoll_event ev;
+struct epoll_event ev;
     ev.data.ptr = &server_fd;
     ev.events = EPOLLIN | EPOLLET;
     if (epoll_ctl(epfd, EPOLL_CTL_ADD, server_fd, &ev))
