@@ -13,6 +13,7 @@
 
 thread_local char stack_data_buffer[JOHNNY_TOTAL_STACK_BUFFER_SIZE];
 thread_local static struct epoll_event ev_buf[JOHNNY_EVENTS_BUFFER];
+char* http_404 = "HTTP/1.1 404 Not Found\r\nContent-length: 0\r\n\r\n";
 
 hot size_t* get_response_length(connection_context* ctx) {
     return ctx->index == JOHNNY_STACK_CONNECTIONS ? &ctx->extension->response_length : &ctx->response_length;
@@ -94,7 +95,7 @@ hot int johnny_sends_response(connection_context* ctx, const char* file_name, co
 
     // build response
     const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
-    const char* response = found ? johnny_file.response : "HTTP/1.1 404 Not Found\r\nContent-length: 0\r\n\r\n";
+    const char* response = found ? johnny_file.response : http_404;
     const size_t response_length = found ? johnny_file.response_length : strlen(response);
 
     // send HTTP response to client
