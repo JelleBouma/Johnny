@@ -150,7 +150,7 @@ hot void johnny_handles_requests(connection_context* ctx, const int epfd) {
                         if (succes_code == -1)
                             return;
                         if (succes_code == EAGAIN) {
-                            memcpy(buffer, buffer + bytes_parsed, bytes_received - bytes_parsed);
+                            memmove(buffer, buffer + bytes_parsed, bytes_received - bytes_parsed);
                             ctx->rnrnget_slash_counter = 0;
                             ctx->buffer_remaining = bytes_received - bytes_parsed;
                             return;
@@ -162,7 +162,7 @@ hot void johnny_handles_requests(connection_context* ctx, const int epfd) {
                 }
                 if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) { // found only partial file name
                     if (bytes_parsed != rnrnget_slash_counter + 9)
-                        memcpy(buffer, buffer + bytes_parsed - rnrnget_slash_counter + 9, rnrnget_slash_counter - 9);
+                        memmove(buffer, buffer + bytes_parsed - rnrnget_slash_counter + 9, rnrnget_slash_counter - 9);
                 }
                 else
                     rnrnget_slash_counter = 0;
