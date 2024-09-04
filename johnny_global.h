@@ -27,9 +27,10 @@ typedef struct heap_connection_context_extension {
 typedef struct connection_context {
     short flags;
     short prefix_counter;
+    short buffer_offset;
+    short buffer_remaining;
     int index;
     int fd;
-    int buffer_remaining;
     const char* response;
     union {
         size_t response_length;

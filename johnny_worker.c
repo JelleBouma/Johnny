@@ -50,8 +50,10 @@ hot connection_context* johnny_allocates_connection(const int_fast32_t fd) {
         new_con = &con_ctx[index];
         new_con->response_length = 0;
     }
+    new_con->flags = 0;
     new_con->index = index;
     new_con->prefix_counter = 4;
+    new_con->buffer_offset = 0;
     new_con->buffer_remaining = 0;
     new_con->fd = fd;
     return new_con;
@@ -103,7 +105,7 @@ hot char* johnny_finds_filename(connection_context* ctx) {
     register int_fast16_t prefix_counter = ctx->prefix_counter;
     char* buffer = get_buffer(ctx);
 
-    for (register int_fast16_t bytes_parsed = 0; bytes_parsed < buffer_remaining; bytes_parsed++) {
+    for (register int_fast16_t bytes_parsed = ctx->buffer_offset; bytes_parsed < buffer_remaining; bytes_parsed++) {
         if (prefix_counter >= 4) { // start reading file name
             bytes_parsed += 9 - prefix_counter;
             if (bytes_parsed >= buffer_remaining) { // unhappy flow: end of buffer between end of http request and start of file name
@@ -132,7 +134,7 @@ hot char* johnny_finds_filename(connection_context* ctx) {
     return NULL; // happy flow: no more file names found
 }
 
-hot void johnny_handles_requests(connection_context* ctx) {
+hot void johnny_handles_requests_old(connection_context* ctx) {
     ssize_t bytes_received = 1;
     register int rnrnget_slash_counter = ctx->prefix_counter;
     register int bytes_parsed = 1;
@@ -186,12 +188,27 @@ hot void johnny_handles_requests(connection_context* ctx) {
         ctx->prefix_counter = rnrnget_slash_counter;
 }
 
+hot void johnny_handles_requests(connection_context* ctx) {
+    const char* file_name = johnny_finds_filename(ctx);
+    while (file_name != NULL)
+    {
+        const int succes_code = johnny_sends_response(ctx, file_name);
+        if (succes_code == -1)
+            return;
+        if (succes_code == EAGAIN) {
+            ctx->buffer_offset = file_name - get_buffer(ctx) + strlen(file_name) + 1;
+            return;
+        }
+        file_name = johnny_finds_filename(ctx);
+    }
+}
+
 hot void johnny_works(const int* server_fd, const int epfd) {
     const int nfds = epoll_wait(epfd, ev_buf, JOHNNY_EVENTS_BUFFER, -1);
     if (nfds < 0)
         perror("calling epoll_wait");
     for (int i = 0; i < nfds; i++) {
-        struct epoll_event ev = ev_buf[i];
+        const struct epoll_event ev = ev_buf[i];
         if (ev.data.ptr == server_fd) {
             const int fd = accept4(*server_fd, NULL, NULL, SOCK_NONBLOCK);
             if (fd != -1) { // connection made
@@ -201,14 +218,17 @@ hot void johnny_works(const int* server_fd, const int epfd) {
             }
         }
         else {
-            if (ev.events & EPOLLOUT && *get_response_length(ev.data.ptr) > 0) { // resume sending
-                const ssize_t bytes_sent_cnt = johnny_sends_bytes(ev.data.ptr);
+            connection_context* ctx = ev.data.ptr;
+            if (ev.events & EPOLLOUT && *get_response_length(ctx) > 0) { // resume sending
+                const ssize_t bytes_sent_cnt = johnny_sends_bytes(ctx);
                 if (bytes_sent_cnt == -1) { // error, cannot send data
-                    johnny_closes_connection(ev.data.ptr);
-                    return;
+                    johnny_closes_connection(ctx);
+                    continue;
                 }
             }
-            johnny_handles_requests(ev.data.ptr);
+            char* file_name = NULL;
+            if (ctx->buffer_remaining)
+                file_name
         }
     }
 }
