@@ -76,14 +76,10 @@ hot void johnny_closes_connection(connection_context* ctx) {
 hot ssize_t johnny_sends_bytes(connection_context* ctx) {
     size_t* response_length = get_response_length(ctx);
     const ssize_t bytes_sent_cnt = send(ctx->fd, ctx->response, *response_length, MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (bytes_sent_cnt == -1) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK)
-            return -1;
-    }
-    else {
-        ctx->response += bytes_sent_cnt;
-        *response_length -= bytes_sent_cnt;
-    }
+    if (bytes_sent_cnt == -1)
+        return errno == EAGAIN || errno == EWOULDBLOCK ? EAGAIN : -1;
+    ctx->response += bytes_sent_cnt;
+    *response_length -= bytes_sent_cnt;
     return 0;
 }
 
@@ -109,18 +105,22 @@ hot char* johnny_finds_filename(connection_context* ctx) {
         if (prefix_counter >= 4) { // start reading file name
             bytes_parsed += 9 - prefix_counter;
             if (bytes_parsed >= buffer_remaining) { // unhappy flow: end of buffer between end of http request and start of file name
+                ctx->buffer_offset = 0;
                 ctx->buffer_remaining = 0;
                 ctx->prefix_counter = 9 - bytes_parsed - buffer_remaining;
                 return NULL;
             }
             char* end_of_filename = memchr(buffer + bytes_parsed, ' ', buffer_remaining - bytes_parsed);
             if (end_of_filename == NULL) { // unhappy flow: partial file name
+                ctx->buffer_offset = 0;
+                ctx->buffer_remaining = 0;
                 ctx->prefix_counter = 9;
                 memmove(buffer, buffer + bytes_parsed, buffer_remaining - bytes_parsed);
                 return NULL;
             }
             *end_of_filename = '\0';
 
+            ctx->buffer_offset = end_of_filename - buffer;
             ctx->buffer_remaining -= end_of_filename - buffer;
             ctx->prefix_counter = 0;
             return buffer + bytes_parsed; // happy flow: filename found
@@ -193,10 +193,8 @@ hot void johnny_handles_requests(connection_context* ctx) {
     while (file_name != NULL)
     {
         const int succes_code = johnny_sends_response(ctx, file_name);
-        if (succes_code == -1)
-            return;
-        if (succes_code == EAGAIN) {
-            ctx->buffer_offset = file_name - get_buffer(ctx) + strlen(file_name) + 1;
+        if (succes_code == -1) {
+            johnny_closes_connection(ctx);
             return;
         }
         file_name = johnny_finds_filename(ctx);
@@ -219,6 +217,7 @@ hot void johnny_works(const int* server_fd, const int epfd) {
         }
         else {
             connection_context* ctx = ev.data.ptr;
+            ctx->flags |= ev.events & EPOLLRDHUP;
             if (ev.events & EPOLLOUT && *get_response_length(ctx) > 0) { // resume sending
                 const ssize_t bytes_sent_cnt = johnny_sends_bytes(ctx);
                 if (bytes_sent_cnt == -1) { // error, cannot send data
@@ -226,9 +225,24 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                     continue;
                 }
             }
-            char* file_name = NULL;
-            if (ctx->buffer_remaining)
-                file_name
+            register bool recv_more = ev.events & EPOLLIN && !ctx->buffer_remaining;
+            if (recv_more) {
+                char* buffer = get_buffer(ctx);
+                while (recv_more) {
+                    const size_t buffer_space = JOHNNY_BUFFER_SIZE - ctx->buffer_offset;
+                    ctx->buffer_remaining = recv(ctx->fd, buffer + ctx->buffer_offset, buffer_space, MSG_DONTWAIT);
+                    if (!ctx->buffer_remaining) { // 0 bytes received meaning connection is closed on other end.
+                        johnny_closes_connection(ctx);
+                        continue;
+                    }
+                    recv_more = ctx->buffer_remaining == buffer_space;
+                    johnny_handles_requests(ctx);
+                    if (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP) // last request handled
+                        johnny_closes_connection(ctx);
+                }
+            }
+            else if (ctx->buffer_remaining)
+                johnny_handles_requests(ctx);
         }
     }
 }

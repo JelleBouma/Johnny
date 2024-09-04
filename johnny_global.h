@@ -11,7 +11,7 @@
 #define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
 #define JOHNNY_CON_BITMAP_LEN (JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG)
 
-#define JOHNNY_CTX_RDHUP 1
+#define JOHNNY_CTX_RDHUP 4
 
 typedef struct johnny_file {
     char* url_encoded_file_name;
