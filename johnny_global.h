@@ -28,7 +28,7 @@ typedef struct connection_context {
     short flags;
     short prefix_counter;
     short buffer_offset;
-    short buffer_remaining;
+    short buffer_size;
     int index;
     int fd;
     const char* response;

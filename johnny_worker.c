@@ -54,7 +54,7 @@ hot connection_context* johnny_allocates_connection(const int_fast32_t fd) {
     new_con->index = index;
     new_con->prefix_counter = 4;
     new_con->buffer_offset = 0;
-    new_con->buffer_remaining = 0;
+    new_con->buffer_size = 0;
     new_con->fd = fd;
     return new_con;
 }
@@ -97,7 +97,7 @@ hot int johnny_sends_response(connection_context* ctx, const char* file_name) {
 }
 
 hot char* johnny_finds_filename(connection_context* ctx) {
-    register const int_fast32_t buffer_remaining = ctx->buffer_remaining;
+    register const int_fast32_t buffer_remaining = ctx->buffer_size;
     register int_fast16_t prefix_counter = ctx->prefix_counter;
     char* buffer = get_buffer(ctx);
 
@@ -106,22 +106,21 @@ hot char* johnny_finds_filename(connection_context* ctx) {
             bytes_parsed += 9 - prefix_counter;
             if (bytes_parsed >= buffer_remaining) { // unhappy flow: end of buffer between end of http request and start of file name
                 ctx->buffer_offset = 0;
-                ctx->buffer_remaining = 0;
+                ctx->buffer_size = 0;
                 ctx->prefix_counter = 9 - bytes_parsed - buffer_remaining;
                 return NULL;
             }
             char* end_of_filename = memchr(buffer + bytes_parsed, ' ', buffer_remaining - bytes_parsed);
             if (end_of_filename == NULL) { // unhappy flow: partial file name
                 ctx->buffer_offset = 0;
-                ctx->buffer_remaining = 0;
+                ctx->buffer_size = 0;
                 ctx->prefix_counter = 9;
                 memmove(buffer, buffer + bytes_parsed, buffer_remaining - bytes_parsed);
                 return NULL;
             }
             *end_of_filename = '\0';
 
-            ctx->buffer_offset = end_of_filename - buffer;
-            ctx->buffer_remaining -= end_of_filename - buffer;
+            ctx->buffer_offset = end_of_filename - buffer + 1;
             ctx->prefix_counter = 0;
             return buffer + bytes_parsed; // happy flow: filename found
         }
@@ -131,61 +130,9 @@ hot char* johnny_finds_filename(connection_context* ctx) {
             prefix_counter = 0;
     }
     ctx->prefix_counter = prefix_counter;
+    ctx->buffer_offset = 0;
+    ctx->buffer_size = 0;
     return NULL; // happy flow: no more file names found
-}
-
-hot void johnny_handles_requests_old(connection_context* ctx) {
-    ssize_t bytes_received = 1;
-    register int rnrnget_slash_counter = ctx->prefix_counter;
-    register int bytes_parsed = 1;
-    char* buffer = get_buffer(ctx);
-    while (bytes_received > 0) {
-        if (ctx->buffer_remaining != 0) {
-            bytes_received = ctx->buffer_remaining;
-            ctx->buffer_remaining = 0;
-            bytes_parsed = 0;
-        }
-        else if (bytes_parsed >= bytes_received) {
-            const int buffer_offset = rnrnget_slash_counter > 9 ? rnrnget_slash_counter - 9 : 0;
-            bytes_received = recv(ctx->fd, buffer + buffer_offset, JOHNNY_BUFFER_SIZE - buffer_offset, MSG_DONTWAIT);
-            bytes_parsed = 0;
-        }
-        for (; bytes_parsed < bytes_received; bytes_parsed++) {
-            if (rnrnget_slash_counter >= 9) { // start of file name
-                for (; bytes_parsed < bytes_received; bytes_parsed++) {
-                    if (buffer[bytes_parsed] == ' ') { // end of file name
-                        buffer[bytes_parsed] = '\0';
-                        const int succes_code = johnny_sends_response(ctx, buffer + bytes_parsed - rnrnget_slash_counter + 9);
-                        if (succes_code == -1)
-                            return;
-                        if (succes_code == EAGAIN) {
-                            memmove(buffer, buffer + bytes_parsed, bytes_received - bytes_parsed);
-                            ctx->prefix_counter = 0;
-                            ctx->buffer_remaining = bytes_received - bytes_parsed;
-                            return;
-                        }
-                        rnrnget_slash_counter = 0;
-                        break;
-                    }
-                    rnrnget_slash_counter++;
-                }
-                if (rnrnget_slash_counter != 0 && rnrnget_slash_counter < 266) { // found only partial file name
-                    if (bytes_parsed != rnrnget_slash_counter + 9)
-                        memmove(buffer, buffer + bytes_parsed - rnrnget_slash_counter + 9, rnrnget_slash_counter - 9);
-                }
-                else
-                    rnrnget_slash_counter = 0;
-            }
-            else if (buffer[bytes_parsed] == "\r\n\r\nGET /"[rnrnget_slash_counter])
-                rnrnget_slash_counter++;
-            else
-                rnrnget_slash_counter = 0;
-        }
-    }
-    if (bytes_received == 0)
-        johnny_closes_connection(ctx);
-    else
-        ctx->prefix_counter = rnrnget_slash_counter;
 }
 
 hot void johnny_handles_requests(connection_context* ctx) {
@@ -225,23 +172,23 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                     continue;
                 }
             }
-            register bool recv_more = ev.events & EPOLLIN && !ctx->buffer_remaining;
+            register bool recv_more = ev.events & EPOLLIN && !ctx->buffer_size;
             if (recv_more) {
                 char* buffer = get_buffer(ctx);
                 while (recv_more) {
                     const size_t buffer_space = JOHNNY_BUFFER_SIZE - ctx->buffer_offset;
-                    ctx->buffer_remaining = recv(ctx->fd, buffer + ctx->buffer_offset, buffer_space, MSG_DONTWAIT);
-                    if (!ctx->buffer_remaining) { // 0 bytes received meaning connection is closed on other end.
+                    ctx->buffer_size = recv(ctx->fd, buffer + ctx->buffer_offset, buffer_space, MSG_DONTWAIT);
+                    if (!ctx->buffer_size) { // 0 bytes received meaning connection is closed on other end.
                         johnny_closes_connection(ctx);
                         continue;
                     }
-                    recv_more = ctx->buffer_remaining == buffer_space;
+                    recv_more = ctx->buffer_size == buffer_space;
                     johnny_handles_requests(ctx);
                     if (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP) // last request handled
                         johnny_closes_connection(ctx);
                 }
             }
-            else if (ctx->buffer_remaining)
+            else if (ctx->buffer_size)
                 johnny_handles_requests(ctx);
         }
     }
