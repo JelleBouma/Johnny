@@ -107,7 +107,7 @@ hot char* johnny_finds_filename(connection_context* ctx) {
             if (bytes_parsed >= buffer_remaining) { // unhappy flow: end of buffer between end of http request and start of file name
                 ctx->buffer_offset = 0;
                 ctx->buffer_size = 0;
-                ctx->prefix_counter = 9 - bytes_parsed - buffer_remaining;
+                ctx->prefix_counter = 9 - (bytes_parsed - buffer_remaining);
                 return NULL;
             }
             char* end_of_filename = memchr(buffer + bytes_parsed, ' ', buffer_remaining - bytes_parsed);
