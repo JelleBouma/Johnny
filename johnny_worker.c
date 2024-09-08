@@ -163,9 +163,9 @@ hot void johnny_works(const int* server_fd, const int epfd) {
         else {
             connection_context* ctx = ev.data.ptr;
             ctx->flags |= ev.events & EPOLLRDHUP;
-            if (ev.events & EPOLLOUT && *get_response_length(ctx) > 0) { // resume sending
-                if (johnny_sends_bytes(ctx)) { // error, cannot send data
-                    johnny_closes_connection(ctx);
+            if (ev.events & EPOLLOUT && *get_response_length(ctx) > 0) { // if the response had not been fully sent
+                if (johnny_sends_bytes(ctx)) { // resume sending
+                    johnny_closes_connection(ctx); // close on failure
                     continue;
                 }
             }
@@ -180,8 +180,8 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                         continue;
                     }
                     recv_more = ctx->buffer_size == buffer_space;
-                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP)) // try to handle requests
-                        johnny_closes_connection(ctx); // close if failure or last request
+                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP && *get_response_length(ctx) == 0)) // try to handle requests
+                        johnny_closes_connection(ctx); // close if failure or last request has been handled
                 }
             }
             else if (johnny_handles_requests(ctx)) // try to handle requests
