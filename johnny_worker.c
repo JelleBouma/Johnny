@@ -73,14 +73,14 @@ hot void johnny_closes_connection(connection_context* ctx) {
     johnny_deallocates_connection(ctx);
 }
 
-hot ssize_t johnny_sends_bytes(connection_context* ctx) {
+hot int johnny_sends_bytes(connection_context* ctx) {
     size_t* response_length = get_response_length(ctx);
     const ssize_t bytes_sent_cnt = send(ctx->fd, ctx->response, *response_length, MSG_DONTWAIT | MSG_NOSIGNAL);
     if (bytes_sent_cnt == -1)
-        return errno == EAGAIN || errno == EWOULDBLOCK ? EAGAIN : -1;
+        return errno == EAGAIN || errno == EWOULDBLOCK ? EXIT_SUCCESS : EXIT_FAILURE;
     ctx->response += bytes_sent_cnt;
     *response_length -= bytes_sent_cnt;
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 hot int johnny_sends_response(connection_context* ctx, const char* file_name) {
@@ -135,17 +135,15 @@ hot char* johnny_finds_filename(connection_context* ctx) {
     return NULL; // happy flow: no more file names found
 }
 
-hot void johnny_handles_requests(connection_context* ctx) {
+hot int johnny_handles_requests(connection_context* ctx) {
     const char* file_name = johnny_finds_filename(ctx);
     while (file_name != NULL)
     {
-        const int succes_code = johnny_sends_response(ctx, file_name);
-        if (succes_code == -1) {
-            johnny_closes_connection(ctx);
-            return;
-        }
+        if (johnny_sends_response(ctx, file_name))
+            return EXIT_FAILURE;
         file_name = johnny_finds_filename(ctx);
     }
+    return EXIT_SUCCESS;
 }
 
 hot void johnny_works(const int* server_fd, const int epfd) {
@@ -166,8 +164,7 @@ hot void johnny_works(const int* server_fd, const int epfd) {
             connection_context* ctx = ev.data.ptr;
             ctx->flags |= ev.events & EPOLLRDHUP;
             if (ev.events & EPOLLOUT && *get_response_length(ctx) > 0) { // resume sending
-                const ssize_t bytes_sent_cnt = johnny_sends_bytes(ctx);
-                if (bytes_sent_cnt == -1) { // error, cannot send data
+                if (johnny_sends_bytes(ctx)) { // error, cannot send data
                     johnny_closes_connection(ctx);
                     continue;
                 }
@@ -183,13 +180,12 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                         continue;
                     }
                     recv_more = ctx->buffer_size == buffer_space;
-                    johnny_handles_requests(ctx);
-                    if (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP) // last request handled
-                        johnny_closes_connection(ctx);
+                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP)) // try to handle requests
+                        johnny_closes_connection(ctx); // close if failure or last request
                 }
             }
-            else if (ctx->buffer_size)
-                johnny_handles_requests(ctx);
+            else if (johnny_handles_requests(ctx)) // try to handle requests
+                johnny_closes_connection(ctx); // close if failure
         }
     }
 }
