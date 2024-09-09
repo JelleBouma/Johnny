@@ -96,7 +96,7 @@ hot int johnny_sends_response(connection_context* ctx, const char* file_name) {
     // build response
     const bool found = !strcmp(file_name, johnny_file.url_encoded_file_name);
     ctx->response = found ? johnny_file.response : http_404;
-    ctx->response_length = found ? johnny_file.response_length : strlen(ctx->response);
+    *get_response_length(ctx) = found ? johnny_file.response_length : strlen(ctx->response);
 
     // send HTTP response to client
     return johnny_sends_bytes(ctx);
