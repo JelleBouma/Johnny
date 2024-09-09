@@ -191,7 +191,7 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                         johnny_closes_connection(ctx); // close if failure or last request has been handled
                 }
             }
-            else if (johnny_handles_requests(ctx)) // try to handle requests
+            else if (ctx->buffer_size && johnny_handles_requests(ctx)) // try to resume handling requests
                 johnny_closes_connection(ctx); // close if failure
         }
     }
