@@ -76,8 +76,14 @@ hot void johnny_closes_connection(connection_context* ctx) {
 hot int johnny_sends_bytes(connection_context* ctx) {
     size_t* response_length = get_response_length(ctx);
     const ssize_t bytes_sent_cnt = send(ctx->fd, ctx->response, *response_length, MSG_DONTWAIT | MSG_NOSIGNAL);
-    if (bytes_sent_cnt == -1)
-        return errno == EAGAIN || errno == EWOULDBLOCK ? EXIT_SUCCESS : EXIT_FAILURE;
+    if (bytes_sent_cnt == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return EXIT_SUCCESS;
+        else {
+            perror("calling send");
+            return EXIT_FAILURE;
+        }
+    }
     ctx->response += bytes_sent_cnt;
     *response_length -= bytes_sent_cnt;
     return EXIT_SUCCESS;
@@ -139,6 +145,7 @@ hot int johnny_handles_requests(connection_context* ctx) {
     const char* file_name = johnny_finds_filename(ctx);
     while (file_name != NULL)
     {
+        printf("file requested: %s\r\n", file_name);
         if (johnny_sends_response(ctx, file_name))
             return EXIT_FAILURE;
         file_name = johnny_finds_filename(ctx);
