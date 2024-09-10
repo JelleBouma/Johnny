@@ -184,11 +184,13 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                     ctx->buffer_size = recv(ctx->fd, buffer + ctx->buffer_offset, buffer_space, MSG_DONTWAIT);
                     if (!ctx->buffer_size) { // 0 bytes received meaning connection is closed on other end.
                         johnny_closes_connection(ctx);
-                        continue;
+                        break;
                     }
                     recv_more = ctx->buffer_size == buffer_space;
-                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP && *get_response_length(ctx) == 0)) // try to handle requests
+                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP && *get_response_length(ctx) == 0)) { // try to handle requests
                         johnny_closes_connection(ctx); // close if failure or last request has been handled
+                        break;
+                    }
                 }
             }
             else if (ctx->buffer_size && johnny_handles_requests(ctx)) // try to resume handling requests
