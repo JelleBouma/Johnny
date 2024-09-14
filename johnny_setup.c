@@ -36,7 +36,9 @@ char* url_encode(const char* originalText)
             || (originalText[i] == '_')
             || (originalText[i] == '~')
             || (originalText[i] == '.')
-            || (originalText[i] == '/')) {
+            || (originalText[i] == '/')
+            || (originalText[i] == '(')
+            || (originalText[i] == ')')) {
             encodedText[pos++] = originalText[i];
             } else {
                 encodedText[pos++] = '%';
@@ -84,6 +86,8 @@ const char* get_mime_type(const char *file_ext) {
         return "image/avif";
     if (!strcasecmp(file_ext, "gif"))
         return "image/gif";
+    if (!strcasecmp(file_ext, "ico"))
+        return "image/x-icon";
 
     if (!strcasecmp(file_ext, "html"))
         return "text/html";
