@@ -145,7 +145,7 @@ hot int johnny_handles_requests(connection_context* ctx) {
     const char* file_name = johnny_finds_filename(ctx);
     while (file_name != NULL)
     {
-        printf("file requested: %s\r\n", file_name);
+        //printf("file requested: %s\r\n", file_name);
         if (johnny_sends_response(ctx, file_name))
             return EXIT_FAILURE;
         file_name = johnny_finds_filename(ctx);
