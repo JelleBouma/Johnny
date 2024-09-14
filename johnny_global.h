@@ -11,6 +11,8 @@
 #define JOHNNY_BITS_PER_LONG (sizeof(long) * 8)
 #define JOHNNY_CON_BITMAP_LEN (JOHNNY_STACK_CONNECTIONS / JOHNNY_BITS_PER_LONG)
 
+#define JOHNNY_CTX_RDHUP 4
+
 typedef struct johnny_file {
     char* url_encoded_file_name;
     char* response;
@@ -23,10 +25,12 @@ typedef struct heap_connection_context_extension {
 } heap_connection_context_extension;
 
 typedef struct connection_context {
+    short flags;
+    short prefix_counter;
+    short buffer_offset;
+    short buffer_size;
     int index;
     int fd;
-    int rnrnget_slash_counter;
-    int buffer_remaining;
     const char* response;
     union {
         size_t response_length;
