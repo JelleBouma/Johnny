@@ -103,25 +103,25 @@ hot int johnny_sends_response(connection_context* ctx, const char* file_name) {
 }
 
 hot char* johnny_finds_filename(connection_context* ctx) {
-    register const int_fast32_t buffer_remaining = ctx->buffer_size;
+    register const int_fast32_t buffer_size = ctx->buffer_size;
     register int_fast16_t prefix_counter = ctx->prefix_counter;
     char* buffer = get_buffer(ctx);
 
-    for (register int_fast16_t bytes_parsed = ctx->buffer_offset; bytes_parsed < buffer_remaining; bytes_parsed++) {
+    for (register int_fast16_t bytes_parsed = ctx->buffer_offset; bytes_parsed < buffer_size; bytes_parsed++) {
         if (prefix_counter >= 4) { // start reading file name
             bytes_parsed += 9 - prefix_counter;
-            if (bytes_parsed >= buffer_remaining) { // unhappy flow: end of buffer between end of http request and start of file name
+            if (bytes_parsed >= buffer_size) { // unhappy flow: end of buffer between end of http request and start of file name
                 ctx->buffer_offset = 0;
                 ctx->buffer_size = 0;
-                ctx->prefix_counter = 9 - (bytes_parsed - buffer_remaining);
+                ctx->prefix_counter = 9 - (bytes_parsed - buffer_size);
                 return NULL;
             }
-            char* end_of_filename = memchr(buffer + bytes_parsed, ' ', buffer_remaining - bytes_parsed);
+            char* end_of_filename = memchr(buffer + bytes_parsed, ' ', buffer_size - bytes_parsed);
             if (end_of_filename == NULL) { // unhappy flow: partial file name
                 ctx->buffer_offset = 0;
                 ctx->buffer_size = 0;
                 ctx->prefix_counter = 9;
-                memmove(buffer, buffer + bytes_parsed, buffer_remaining - bytes_parsed);
+                memmove(buffer, buffer + bytes_parsed, buffer_size - bytes_parsed);
                 return NULL;
             }
             *end_of_filename = '\0';
