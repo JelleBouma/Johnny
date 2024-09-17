@@ -10,8 +10,9 @@
 
 #include "johnny_config.h"
 #include "johnny_global.h"
+#include "johnny_worker_tls.h"
 
-thread_local char stack_data_buffer[JOHNNY_TOTAL_STACK_BUFFER_SIZE];
+thread_local unsigned char stack_data_buffer[JOHNNY_TOTAL_STACK_BUFFER_SIZE];
 thread_local static struct epoll_event ev_buf[JOHNNY_EVENTS_BUFFER];
 char* http_404 = "HTTP/1.1 404 Not Found\r\nContent-length: 0\r\n\r\n";
 
@@ -19,7 +20,7 @@ hot size_t* get_response_length(connection_context* ctx) {
     return ctx->index == JOHNNY_STACK_CONNECTIONS ? &ctx->extension->response_length : &ctx->response_length;
 }
 
-hot char* get_buffer(const connection_context* ctx) {
+hot unsigned char* get_buffer(const connection_context* ctx) {
     return ctx->index == JOHNNY_STACK_CONNECTIONS ? ctx->extension->buffer : stack_data_buffer + ctx->index * JOHNNY_BUFFER_SIZE;
 }
 
@@ -178,7 +179,7 @@ hot void johnny_works(const int* server_fd, const int epfd) {
             }
             register bool recv_more = ev.events & EPOLLIN && !ctx->buffer_size;
             if (recv_more) {
-                char* buffer = get_buffer(ctx);
+                unsigned char* buffer = get_buffer(ctx);
                 while (recv_more) {
                     const size_t buffer_space = JOHNNY_BUFFER_SIZE - ctx->buffer_offset;
                     ctx->buffer_size = recv(ctx->fd, buffer + ctx->buffer_offset, buffer_space, MSG_DONTWAIT);
@@ -186,11 +187,12 @@ hot void johnny_works(const int* server_fd, const int epfd) {
                         johnny_closes_connection(ctx);
                         break;
                     }
+                    print_tls_handshake(buffer, ctx->buffer_offset);
                     recv_more = ctx->buffer_size == buffer_space;
-                    if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP && *get_response_length(ctx) == 0)) { // try to handle requests
-                        johnny_closes_connection(ctx); // close if failure or last request has been handled
-                        break;
-                    }
+                     // TODO HACK// if (johnny_handles_requests(ctx) || (!recv_more && ctx->flags & JOHNNY_CTX_RDHUP && *get_response_length(ctx) == 0)) { // try to handle requests
+                     // TODO HACK//     johnny_closes_connection(ctx); // close if failure or last request has been handled
+                     // TODO HACK//     break;
+                     // TODO HACK// }
                 }
             }
             else if (ctx->buffer_size && johnny_handles_requests(ctx)) // try to resume handling requests

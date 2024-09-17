@@ -21,7 +21,7 @@ typedef struct johnny_file {
 
 typedef struct heap_connection_context_extension {
     size_t response_length;
-    char buffer[JOHNNY_BUFFER_SIZE];
+    unsigned char buffer[JOHNNY_BUFFER_SIZE];
 } heap_connection_context_extension;
 
 typedef struct connection_context {

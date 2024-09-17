@@ -12,7 +12,9 @@ add_executable(Johnny johnny.c file_io.c file_io.h ${CMPH}
         johnny_setup.c
         johnny_setup.h
         johnny_worker.c
-        johnny_worker.h)
+        johnny_worker.h
+        johnny_worker_tls.c
+        johnny_worker_tls.h)
 
 target_link_libraries(Johnny PRIVATE m)
 target_link_libraries(Johnny PRIVATE pthread)
